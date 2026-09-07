@@ -180,14 +180,27 @@ def _run_e2e(cfg, device, args) -> float:
         dv.samples = _balanced_head(dv.samples, dev_lim)
     bs = int(cfg.get("batch_size", 8))
 
+    # Build the parquet Arrow index (per split) in THIS process first — forked DataLoader
+    # workers then just mmap the finished file (a fresh build inside a worker can deadlock).
+    from training.hf_audio import HFAudioStore, is_ref, parse_ref
+
+    seen_splits = set()
+    for s in list(tr.samples) + list(dv.samples):
+        if is_ref(s.path):
+            key = parse_ref(s.path)[:2]
+            if key not in seen_splits:
+                seen_splits.add(key)
+                HFAudioStore.load(s.path)
+
     # ASVspoof train is ~9x spoof; sample classes evenly so bonafide isn't drowned out
     labels = np.array([s.label for s in tr.samples])
     w = np.where(labels == 1, 1.0 / max((labels == 1).sum(), 1),
                  1.0 / max((labels == 0).sum(), 1))
     sampler = torch.utils.data.WeightedRandomSampler(torch.as_tensor(w, dtype=torch.double),
                                                      num_samples=len(tr), replacement=True)
+    nw = int(cfg.get("num_workers", 2))
     tr_dl = DataLoader(tr, batch_size=bs, sampler=sampler, collate_fn=collate_waveforms,
-                       num_workers=int(cfg.get("num_workers", 2)), drop_last=True)
+                       num_workers=nw, drop_last=True, persistent_workers=nw > 0)
     dv_dl = DataLoader(dv, batch_size=bs, shuffle=False, collate_fn=collate_waveforms)
 
     model = EndToEndDetector(model_id=fe["model_id"], layer=fe["layer"],
@@ -253,6 +266,7 @@ def _train_loop(cfg, args, model, loss_fn, opt, tr_dl, dv_dl, device, scorer,
         if hasattr(model, "frontend") and not model.frontend_trainable:
             model.frontend.eval()
         t0, tot, n = time.time(), 0.0, 0
+        n_batches = len(tr_dl)
         optimizer.zero_grad(set_to_none=True)
         for i, batch in enumerate(tr_dl):
             x, y = batch[0].to(device), batch[1].to(device)
@@ -267,6 +281,9 @@ def _train_loop(cfg, args, model, loss_fn, opt, tr_dl, dv_dl, device, scorer,
                 optimizer.zero_grad(set_to_none=True)
             tot += float(loss.detach()) * len(y)
             n += len(y)
+            if i == 0 or (i + 1) % 200 == 0:
+                print(f"  ep{ep} batch {i+1}/{n_batches}  loss={tot/max(n,1):.4f}  "
+                      f"({time.time()-t0:.0f}s)", flush=True)
         eer, n_dev = _eer_over_loader(scorer, dv_dl, device)
         flag = ""
         if eer < best:

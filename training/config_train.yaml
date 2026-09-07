@@ -22,7 +22,7 @@ classifier:
 
 batch_size: 8            # e2e (waveform+frontend); frozen mode can go much higher
 grad_accum: 4            # effective batch = batch_size * grad_accum
-num_workers: 2
+num_workers: 0           # 0 = load in the main process; >0 can deadlock with the parquet-backed dataset
 epochs: 20
 crop_seconds: 4.0
 max_frames: 400          # frozen mode: cap on cached feature frames per clip
