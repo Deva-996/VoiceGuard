@@ -46,6 +46,14 @@ def main() -> int:
 
     sh("scripts/prepare_manifests.py")
 
+    # the ASVspoof2019 audio is now materialised under data/processed/ — drop the ~7.5 GB of
+    # source parquet so a persisted data dir (Kaggle /kaggle/working, 20 GB) stays under quota
+    pq = ROOT / "data" / "raw" / "asvspoof2019_LA" / "data"
+    if pq.exists() and (ROOT / "data" / "processed" / "asvspoof2019_LA").exists():
+        for f in pq.glob("*.parquet"):
+            f.unlink()
+        print(f"cleaned {pq}/*.parquet")
+
     train_cmd = ["-m", "training.train", "--config", args.config]
     if args.epochs:
         train_cmd += ["--epochs", str(args.epochs)]

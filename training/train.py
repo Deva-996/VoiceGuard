@@ -182,7 +182,7 @@ def _run_e2e(cfg, device, args) -> float:
 
     def on_epoch_start(ep):
         nonlocal opt
-        if unfreeze_ep is not None and ep == unfreeze_ep + 1 and not model.frontend_trainable:
+        if unfreeze_ep is not None and ep >= unfreeze_ep + 1 and not model.frontend_trainable:
             model.set_frontend_trainable(True)
             opt = torch.optim.AdamW(
                 [{"params": head_params, "lr": o.get("lr", 1e-4)},
@@ -204,10 +204,23 @@ def _train_loop(cfg, args, model, loss_fn, opt, tr_dl, dv_dl, device, scorer,
     accum = int(cfg.get("grad_accum", 1))
     out = ROOT / cfg["checkpoint"]["out"]
     out.parent.mkdir(parents=True, exist_ok=True)
+    resume_path = out.with_suffix(".resume.pt")
     uses_emb = getattr(loss_fn, "uses_embedding", False)
     best = float("inf")
+    start_ep = 1
 
-    for ep in range(1, epochs + 1):
+    if resume_path.exists() and not args.limit:
+        ck = torch.load(resume_path, map_location=device, weights_only=False)
+        start_ep = ck["epoch"] + 1
+        best = ck["best"]
+        if on_epoch_start:
+            on_epoch_start(start_ep)  # re-apply unfreeze if we're past it
+        model.load_state_dict(ck["model"])
+        loss_fn.load_state_dict(ck["loss"])
+        (get_opt() if get_opt else opt).load_state_dict(ck["opt"])
+        print(f"resumed from {resume_path.name}: epoch {start_ep}, best EER {best*100:.2f}%")
+
+    for ep in range(start_ep, epochs + 1):
         if on_epoch_start:
             on_epoch_start(ep)
         optimizer = get_opt() if get_opt else opt
@@ -238,10 +251,16 @@ def _train_loop(cfg, args, model, loss_fn, opt, tr_dl, dv_dl, device, scorer,
             st["epoch"] = ep
             torch.save(st, out)
             flag = "  <- best, saved"
+        # resume state every epoch (killed session -> re-run continues from here)
+        if not args.limit:
+            torch.save({"epoch": ep, "best": best, "model": model.state_dict(),
+                        "loss": loss_fn.state_dict(),
+                        "opt": (get_opt() if get_opt else opt).state_dict()}, resume_path)
         print(f"epoch {ep:2d}/{epochs}  loss={tot/max(n,1):.4f}  dev_EER={eer*100:.2f}%  "
               f"({n_dev} dev, {time.time()-t0:.0f}s){flag}", flush=True)
 
     print(f"\nbest dev EER {best*100:.2f}%  ->  {out}")
+    resume_path.unlink(missing_ok=True)
     return best
 
 

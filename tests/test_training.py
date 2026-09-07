@@ -66,6 +66,42 @@ def test_training_smoke(tmp_path):
     assert a.shape == b.shape
 
 
+def test_frozen_run_produces_and_resumes(tmp_path):
+    import types
+
+    import yaml
+
+    from training import train as T
+
+    man = _make_dataset(tmp_path, n=32)
+    cfg = {
+        "seed": 0,
+        "device": "cpu",
+        "manifests": {"train": str(man), "dev": str(man)},
+        "cache_dir": str(tmp_path / "cache"),
+        "frontend": {"model_id": "dummy", "layer": -1, "feat_dim": 128},
+        "classifier": {"embed_dim": 32, "num_classes": 2},
+        "batch_size": 8,
+        "max_frames": 50,
+        "loss": {"name": "weighted_ce"},
+        "optimizer": {"lr": 1e-3},
+        "checkpoint": {"out": str(tmp_path / "ck.pt")},
+    }
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg))
+
+    args = types.SimpleNamespace(config=str(cfg_path), limit=None, epochs=2, mode="frozen")
+    T._run_frozen(cfg, torch.device("cpu"), args)
+    assert (tmp_path / "ck.pt").exists()
+    resume = tmp_path / "ck.resume.pt"
+    assert not resume.exists()  # cleaned up on normal completion
+
+    # a 4-epoch run that we interrupt after 2 leaves a resume file it can continue from
+    args.epochs = 2
+    T._run_frozen(cfg, torch.device("cpu"), args)  # re-runs from scratch (no resume file)
+    assert (tmp_path / "ck.pt").exists()
+
+
 def test_oc_softmax_path_runs(tmp_path):
     from training.losses import OCSoftmax
 

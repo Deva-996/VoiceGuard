@@ -59,32 +59,50 @@ class Row:
 
 # ---------------------------------------------------------------- ASVspoof 2019 LA (parquet)
 def parse_asvspoof2019(split: str) -> list[Row]:
-    import pyarrow.parquet as pq
+    """Materialise flac from the HF parquet on first run; on later runs read the labels
+    index we cached next to the flac (the parquet may have been pruned to save disk)."""
+    import csv as _csv
+
     import soundfile as sf
+
+    out_dir = PROC / "asvspoof2019_LA" / split
+    idx = out_dir / "_labels.tsv"
+
+    def _row(uid, key, sysid):
+        label = "bonafide" if int(key) == 0 else "spoof"
+        source = "human" if int(key) == 0 else f"tts_vc:{sysid}"
+        return Row(f"a19_{uid}", str(out_dir / f"{uid}.flac"), label, "en", source, "asvspoof2019_LA")
+
+    if idx.exists():
+        with idx.open(encoding="utf-8", newline="") as fh:
+            return [_row(r["utt_id"], r["key"], r["system_id"]) for r in _csv.DictReader(fh, delimiter="\t")
+                    if (out_dir / f"{r['utt_id']}.flac").exists()]
+
+    import pyarrow.parquet as pq
 
     fname = {"train": "train", "dev": "validation", "eval": "test"}[split]
     files = list((RAW / "asvspoof2019_LA" / "data").glob(f"{fname}-*.parquet"))
     if not files:
         return []
-    out_dir = PROC / "asvspoof2019_LA" / split
     out_dir.mkdir(parents=True, exist_ok=True)
-    rows: list[Row] = []
+    rows, index = [], []
     for pqfile in files:
         tbl = pq.read_table(pqfile)
         cols = {c: tbl[c].to_pylist() for c in tbl.column_names}
         for i in range(tbl.num_rows):
-            uid = cols["audio_file_name"][i]
-            key = cols["key"][i]
-            sysid = cols["system_id"][i]
+            uid, key, sysid = cols["audio_file_name"][i], cols["key"][i], cols["system_id"][i]
             dst = out_dir / f"{uid}.flac"
             if not dst.exists():
                 audio = cols["audio"][i]
                 raw = audio["bytes"] if audio.get("bytes") else Path(audio["path"]).read_bytes()
-                wav, sr = sf.read(io.BytesIO(raw))
-                sf.write(dst, wav, sr)
-            label = "bonafide" if key == 0 else "spoof"
-            source = "human" if key == 0 else f"tts_vc:{sysid}"
-            rows.append(Row(f"a19_{uid}", str(dst), label, "en", source, "asvspoof2019_LA"))
+                w, sr = sf.read(io.BytesIO(raw))
+                sf.write(dst, w, sr)
+            index.append({"utt_id": uid, "key": key, "system_id": sysid})
+            rows.append(_row(uid, key, sysid))
+    with idx.open("w", encoding="utf-8", newline="") as fh:
+        wr = _csv.DictWriter(fh, fieldnames=["utt_id", "key", "system_id"], delimiter="\t")
+        wr.writeheader()
+        wr.writerows(index)
     return rows
 
 
