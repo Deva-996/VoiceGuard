@@ -101,26 +101,38 @@ def score_manifest(checkpoint: str | Path, manifest: str | Path, device: str = "
     return out
 
 
-def report(scored, by: list[str]) -> None:
+def _eer_row(pairs):
     from training.metrics import compute_eer, compute_min_tdcf
 
-    def eer_line(name, pairs):
-        bona = np.array([p for s, p in pairs if s.label == 0])
-        spoof = np.array([p for s, p in pairs if s.label == 1])
-        eer, thr = compute_eer(bona, spoof)
-        tdcf = compute_min_tdcf(bona, spoof)
-        print(f"  {name:28s}  EER={eer*100:6.2f}%   min-tDCF={tdcf:.4f}   "
-              f"(n={len(pairs)}, {len(spoof)} spoof / {len(bona)} bona)")
+    bona = np.array([p for s, p in pairs if s.label == 0])
+    spoof = np.array([p for s, p in pairs if s.label == 1])
+    eer, _ = compute_eer(bona, spoof)
+    return eer, compute_min_tdcf(bona, spoof), len(spoof), len(bona)
+
+
+def report(scored, by: list[str], md_path: str | None = None) -> None:
+    lines = []
+
+    def emit(name, pairs):
+        eer, tdcf, ns, nb = _eer_row(pairs)
+        print(f"  {name:28s}  EER={eer*100:6.2f}%   min-tDCF={tdcf:.4f}   (n={len(pairs)}, {ns}s/{nb}b)")
+        lines.append((name, eer, tdcf, ns, nb))
 
     print("\npooled:")
-    eer_line("ALL", scored)
+    emit("ALL", scored)
     for col in by:
         print(f"\nby {col}:")
         groups: dict[str, list] = defaultdict(list)
         for s, p in scored:
             groups[getattr(s, col, "?")].append((s, p))
         for k in sorted(groups):
-            eer_line(f"{col}={k}", groups[k])
+            emit(f"{col}={k}", groups[k])
+
+    if md_path:
+        md = ["| slice | EER | min-tDCF | spoof | bona |", "|---|---|---|---|---|"]
+        md += [f"| {n} | {e*100:.2f}% | {t:.4f} | {s} | {b} |" for n, e, t, s, b in lines]
+        Path(md_path).write_text("\n".join(md) + "\n", encoding="utf-8")
+        print(f"\nwrote {md_path}")
 
 
 def main() -> int:
@@ -134,6 +146,7 @@ def main() -> int:
                     help="cap utts per dataset (balanced); 0 = use all")
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--dump", default=None, help="write per-utt scores TSV here")
+    ap.add_argument("--md", default=None, help="write the results table as markdown here")
     args = ap.parse_args()
 
     scored = score_manifest(args.checkpoint, args.manifest, args.device, args.limit,
@@ -146,7 +159,7 @@ def main() -> int:
             encoding="utf-8",
         )
         print(f"wrote {args.dump}")
-    report(scored, [c.strip() for c in args.by.split(",") if c.strip()])
+    report(scored, [c.strip() for c in args.by.split(",") if c.strip()], md_path=args.md)
     return 0
 
 
