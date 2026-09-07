@@ -108,52 +108,61 @@ def parse_asvspoof2019(split: str) -> list[Row]:
 
 # ---------------------------------------------------------------- ASVspoof 2021 LA eval (tar)
 def parse_asvspoof2021_eval() -> list[Row]:
-    import soundfile as sf
-
+    """flac stays in place (181k files, 16 kHz already). Labels from
+    keys/LA/CM/trial_metadata.txt:  SPK  UTT  codec  tx  ATTACK(-|A07..)  KEY  trim  split."""
     base = RAW / "asvspoof2021_LA_eval"
-    flac_root = next(base.rglob("ASVspoof2021_LA_eval"), None) if base.exists() else None
-    key_file = next(base.rglob("*trial_metadata.txt"), None) or next(base.rglob("*keys*/*LA*.txt"), None)
-    if flac_root is None or key_file is None:
-        # audio may still be a tarball
-        tars = list(base.glob("*.tar.gz")) if base.exists() else []
-        if tars and flac_root is None:
-            for t in tars:
-                with tarfile.open(t) as tf:
-                    tf.extractall(base, filter="data")
-            return parse_asvspoof2021_eval()
+    if not base.exists():
         return []
 
-    out_dir = PROC / "asvspoof2021_LA_eval"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    labels: dict[str, tuple[str, str]] = {}
+    flac_dir = base / "ASVspoof2021_LA_eval" / "flac"
+    if not flac_dir.is_dir():
+        audio_tar = base / "ASVspoof2021_LA_eval.tar.gz"
+        if audio_tar.exists():
+            print("  extracting ASVspoof2021_LA_eval.tar.gz (~181k flac, a few minutes)...")
+            with tarfile.open(audio_tar) as tf:
+                tf.extractall(base, filter="data")
+    if not flac_dir.is_dir():
+        return []
+
+    key_file = next((p for p in base.rglob("trial_metadata.txt") if "CM" in str(p)), None)
+    if key_file is None:
+        keys_tar = base / "LA-keys-full.tar.gz"
+        if keys_tar.exists():
+            with tarfile.open(keys_tar) as tf:
+                tf.extractall(base, filter="data")
+            key_file = next((p for p in base.rglob("trial_metadata.txt") if "CM" in str(p)), None)
+    if key_file is None:
+        print("  no CM trial_metadata.txt — download LA-keys-full.tar.gz")
+        return []
+
+    rows: list[Row] = []
     for line in Path(key_file).read_text(encoding="utf-8").splitlines():
         p = line.split()
         if len(p) < 6:
             continue
-        # ASVspoof2021 metadata: SPK  UTT  ...  SRC  KEY(bonafide|spoof) ...
-        utt = p[1]
-        lab = "bonafide" if "bonafide" in p else ("spoof" if "spoof" in p else None)
-        if lab:
-            labels[utt] = (lab, p[4] if len(p) > 4 else "-")
-    rows: list[Row] = []
-    for flac in flac_root.rglob("*.flac"):
-        utt = flac.stem
-        if utt not in labels:
+        utt, attack, key = p[1], p[4], p[5]
+        flac = flac_dir / f"{utt}.flac"
+        if not flac.exists():
             continue
-        lab, src = labels[utt]
-        dst = out_dir / f"{utt}.flac"
-        if not dst.exists():
-            wav, sr = sf.read(flac)
-            sf.write(dst, wav, sr)
-        source = "human" if lab == "bonafide" else f"tts_vc:{src}"
-        rows.append(Row(f"a21_{utt}", str(dst), lab, "en", source, "asvspoof2021_LA"))
+        label = "bonafide" if key == "bonafide" else "spoof"
+        source = "human" if label == "bonafide" else f"tts_vc:{attack}"
+        rows.append(Row(f"a21_{utt}", str(flac), label, "en", source, "asvspoof2021_LA"))
     return rows
 
 
 # ---------------------------------------------------------------- In-the-Wild (zip)
 def parse_in_the_wild() -> list[Row]:
-    base = RAW / "in_the_wild" / "release_in_the_wild"
+    import zipfile
+
+    root = RAW / "in_the_wild"
+    base = root / "release_in_the_wild"
     meta = base / "meta.csv"
+    if not meta.exists():
+        zf = root / "release_in_the_wild.zip"
+        if zf.exists():
+            print("  extracting release_in_the_wild.zip (~32k wav)...")
+            with zipfile.ZipFile(zf) as z:
+                z.extractall(root)
     if not meta.exists():
         return []
     rows: list[Row] = []

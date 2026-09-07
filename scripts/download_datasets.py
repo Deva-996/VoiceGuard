@@ -60,8 +60,8 @@ DIRECT = {
         "asvspoof2021_LA_eval/ASVspoof2021_LA_eval.tar.gz",
     ),
     "asvspoof2021_LA_keys": (
-        "https://www.asvspoof.org/asvspoof2021/LA-keys-stage-1.tar.gz",
-        "asvspoof2021_LA_eval/LA-keys-stage-1.tar.gz",
+        "https://www.asvspoof.org/asvspoof2021/LA-keys-full.tar.gz",
+        "asvspoof2021_LA_eval/LA-keys-full.tar.gz",
     ),
 }
 
@@ -158,8 +158,9 @@ def get_indictts() -> None:
     print(f"IndicTTS (SPRINGLab, HF)  — {INDICTTS_N} utts/lang, {len(INDICTTS_REPOS)} langs")
     for lang, repo in INDICTTS_REPOS.items():
         out = RAW / "indictts" / lang
-        if (out / "transcripts.tsv").exists():
-            print(f"  have {lang}")
+        tsv = out / "transcripts.tsv"
+        if tsv.exists() and len(tsv.read_text(encoding="utf-8").splitlines()) > 100:
+            print(f"  have {lang} ({len(tsv.read_text(encoding='utf-8').splitlines())-1} utts)")
             continue
         print(f"  {lang}  <- {repo}")
         try:
@@ -176,9 +177,14 @@ def get_fleurs() -> None:
     print("FLEURS Indian languages  (HF google/fleurs, streamed)")
     for lang in FLEURS_LANGS:
         out = RAW / "fleurs" / lang
-        if (out / "transcripts.tsv").exists():
+        tsv = out / "transcripts.tsv"
+        if tsv.exists() and len(tsv.read_text(encoding="utf-8").splitlines()) > 100:
             print(f"  have {lang}")
             continue
+        if out.exists():  # incomplete -> restart this language
+            import shutil
+
+            shutil.rmtree(out)
         print(f"  {lang}")
         total = 0
         for split, n in FLEURS_SPLIT_N.items():
