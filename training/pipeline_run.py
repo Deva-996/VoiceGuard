@@ -37,12 +37,17 @@ def main() -> int:
 
     cfg = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
     ckpt = ROOT / cfg["checkpoint"]["out"]
+    dev = cfg.get("device", "auto")
+    if dev == "auto":
+        import torch
+
+        dev = "cuda" if torch.cuda.is_available() else "cpu"
 
     if not args.skip_download:
         # ASVspoof2019 (train/dev/eval) + Indic genuine; big eval sets optional
         sh("scripts/download_datasets.py", "--only", "asvspoof2019,indictts,fleurs")
     if not args.skip_fakes:
-        sh("scripts/generate_indian_fakes.py", "--n", str(args.fake_n))
+        sh("scripts/generate_indian_fakes.py", "--n", str(args.fake_n), "--device", dev)
 
     sh("scripts/prepare_manifests.py")
 
@@ -62,7 +67,6 @@ def main() -> int:
     sh(*train_cmd)  # train.py builds the feature cache itself, then trains
 
     if ckpt.exists():
-        dev = "cuda" if cfg.get("device") in (None, "auto", "cuda") else "cpu"
         sh(
             "-m", "training.evaluate",
             "--checkpoint", str(ckpt),
