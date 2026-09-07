@@ -44,20 +44,13 @@ def main() -> int:
         dev = "cuda" if torch.cuda.is_available() else "cpu"
 
     if not args.skip_download:
-        # ASVspoof2019 (train/dev/eval) + Indic genuine; big eval sets optional
-        sh("scripts/download_datasets.py", "--only", "asvspoof2019,indictts,fleurs")
+        # ASVspoof2019 (train/dev/eval) + IndicTTS genuine. FLEURS / the big eval sets are
+        # extra coverage — add "--only ...,fleurs,in_the_wild" locally when disk allows.
+        sh("scripts/download_datasets.py", "--only", "asvspoof2019,indictts")
     if not args.skip_fakes:
         sh("scripts/generate_indian_fakes.py", "--n", str(args.fake_n), "--device", dev)
 
-    sh("scripts/prepare_manifests.py")
-
-    # the ASVspoof2019 audio is now materialised under data/processed/ — drop the ~7.5 GB of
-    # source parquet so a persisted data dir (Kaggle /kaggle/working, 20 GB) stays under quota
-    pq = ROOT / "data" / "raw" / "asvspoof2019_LA" / "data"
-    if pq.exists() and (ROOT / "data" / "processed" / "asvspoof2019_LA").exists():
-        for f in pq.glob("*.parquet"):
-            f.unlink()
-        print(f"cleaned {pq}/*.parquet")
+    sh("scripts/prepare_manifests.py")  # ASVspoof2019 stays as parquet, read in place
 
     train_cmd = ["-m", "training.train", "--config", args.config]
     if args.epochs:

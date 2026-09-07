@@ -79,10 +79,15 @@ def build_cache(manifest: str | Path, cfg: dict, limit: int | None = None) -> Fe
 
     import soundfile as sf
 
+    from training.hf_audio import HFAudioStore, is_ref
+
     for i, s in enumerate(todo, 1):
-        wav, sr = sf.read(s.path, dtype="float32", always_2d=False)
-        if getattr(wav, "ndim", 1) == 2:
-            wav = wav.mean(axis=1)
+        if is_ref(s.path):
+            wav, sr = HFAudioStore.load(s.path)
+        else:
+            wav, sr = sf.read(s.path, dtype="float32", always_2d=False)
+            if getattr(wav, "ndim", 1) == 2:
+                wav = wav.mean(axis=1)
         if sr != 16000:
             from backend.audio import resample_to_16k
 

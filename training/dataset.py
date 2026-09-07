@@ -88,9 +88,14 @@ class ManifestDataset(Dataset):
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, int, str]:
         s = self.samples[idx]
-        wav, sr = sf.read(s.path, dtype="float32", always_2d=False)
-        if getattr(wav, "ndim", 1) == 2:
-            wav = wav.mean(axis=1)
+        from training.hf_audio import HFAudioStore, is_ref
+
+        if is_ref(s.path):
+            wav, sr = HFAudioStore.load(s.path)
+        else:
+            wav, sr = sf.read(s.path, dtype="float32", always_2d=False)
+            if getattr(wav, "ndim", 1) == 2:
+                wav = wav.mean(axis=1)
         if sr != self.sample_rate:
             from backend.audio import resample_to_16k
 

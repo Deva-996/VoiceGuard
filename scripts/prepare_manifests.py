@@ -25,13 +25,14 @@ from __future__ import annotations
 
 import argparse
 import csv
-import io
+import sys
 import tarfile
 from collections import Counter
 from dataclasses import astuple, dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 RAW = ROOT / "data" / "raw"
 PROC = ROOT / "data" / "processed"
 GENERATED = ROOT / "data" / "generated"
@@ -59,53 +60,29 @@ class Row:
 
 # ---------------------------------------------------------------- ASVspoof 2019 LA (parquet)
 def parse_asvspoof2019(split: str) -> list[Row]:
-    """Materialise flac from the HF parquet on first run; on later runs read the labels
-    index we cached next to the flac (the parquet may have been pruned to save disk)."""
-    import csv as _csv
-
-    import soundfile as sf
-
-    out_dir = PROC / "asvspoof2019_LA" / split
-    idx = out_dir / "_labels.tsv"
-
-    def _row(uid, key, sysid):
-        label = "bonafide" if int(key) == 0 else "spoof"
-        source = "human" if int(key) == 0 else f"tts_vc:{sysid}"
-        return Row(f"a19_{uid}", str(out_dir / f"{uid}.flac"), label, "en", source, "asvspoof2019_LA")
-
-    if idx.exists():
-        with idx.open(encoding="utf-8", newline="") as fh:
-            return [_row(r["utt_id"], r["key"], r["system_id"]) for r in _csv.DictReader(fh, delimiter="\t")
-                    if (out_dir / f"{r['utt_id']}.flac").exists()]
-
+    """No materialisation — manifest rows reference rows inside the HF parquet shards
+    (see training/hf_audio.py). Reads only the label columns from the parquet."""
     import pyarrow.parquet as pq
 
+    from training.hf_audio import make_ref
+
+    pq_dir = RAW / "asvspoof2019_LA" / "data"
     fname = {"train": "train", "dev": "validation", "eval": "test"}[split]
-    files = list((RAW / "asvspoof2019_LA" / "data").glob(f"{fname}-*.parquet"))
+    files = sorted(pq_dir.glob(f"{fname}-*.parquet"))
     if not files:
         return []
-    out_dir.mkdir(parents=True, exist_ok=True)
-    rows, index, done = [], [], 0
+
+    rows: list[Row] = []
+    running = 0  # global row index across shards for this split, matches hf_audio load order
     for pqfile in files:
-        # stream in row-batches — a test shard is >4 GB, don't read_table it whole
-        for batch in pq.ParquetFile(pqfile).iter_batches(batch_size=256):
-            d = batch.to_pydict()
-            for uid, key, sysid, audio in zip(d["audio_file_name"], d["key"],
-                                              d["system_id"], d["audio"]):
-                dst = out_dir / f"{uid}.flac"
-                if not dst.exists():
-                    raw = audio["bytes"] if audio.get("bytes") else Path(audio["path"]).read_bytes()
-                    w, sr = sf.read(io.BytesIO(raw))
-                    sf.write(dst, w, sr)
-                index.append({"utt_id": uid, "key": key, "system_id": sysid})
-                rows.append(_row(uid, key, sysid))
-                done += 1
-                if done % 5000 == 0:
-                    print(f"    {split}: {done} materialised")
-    with idx.open("w", encoding="utf-8", newline="") as fh:
-        wr = _csv.DictWriter(fh, fieldnames=["utt_id", "key", "system_id"], delimiter="\t")
-        wr.writeheader()
-        wr.writerows(index)
+        tbl = pq.read_table(pqfile, columns=["audio_file_name", "key", "system_id"])
+        d = tbl.to_pydict()
+        for uid, key, sysid in zip(d["audio_file_name"], d["key"], d["system_id"]):
+            label = "bonafide" if int(key) == 0 else "spoof"
+            source = "human" if int(key) == 0 else f"tts_vc:{sysid}"
+            rows.append(Row(f"a19_{uid}", make_ref(pq_dir, fname, running),
+                            label, "en", source, "asvspoof2019_LA"))
+            running += 1
     return rows
 
 

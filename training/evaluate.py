@@ -77,10 +77,15 @@ def score_manifest(checkpoint: str | Path, manifest: str | Path, device: str = "
     crop = int(16000 * crop_seconds)
     print(f"scoring {len(rows)} utts (batch {batch_size})")
 
+    from training.hf_audio import HFAudioStore, is_ref
+
     def load(path):
-        w, sr = sf.read(path, dtype="float32", always_2d=False)
-        if getattr(w, "ndim", 1) == 2:
-            w = w.mean(axis=1)
+        if is_ref(path):
+            w, sr = HFAudioStore.load(path)
+        else:
+            w, sr = sf.read(path, dtype="float32", always_2d=False)
+            if getattr(w, "ndim", 1) == 2:
+                w = w.mean(axis=1)
         if sr != 16000:
             w = resample_to_16k(np.asarray(w), sr)
         w = np.asarray(w, dtype="float32")
