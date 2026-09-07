@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VoiceGuard — Caller</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <main class="wrap">
+    <h1>Caller</h1>
+    <p>Shares mic audio with the receiver over WebRTC. [Day 6]</p>
+
+    <section class="panel">
+      <button id="start">Start mic &amp; create offer</button>
+      <label>Offer SDP (copy to receiver)
+        <textarea id="localSdp" rows="4" readonly></textarea>
+      </label>
+      <label>Answer SDP (paste from receiver)
+        <textarea id="remoteSdp" rows="4"></textarea>
+      </label>
+      <button id="connect" disabled>Connect</button>
+      <p id="status" class="status">idle</p>
+    </section>
+  </main>
+  <script src="/static/js/webrtc.js"></script>
+  <script src="/static/js/caller.js"></script>
+</body>
+</html>

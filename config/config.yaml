@@ -1,0 +1,45 @@
+# VoiceGuard runtime configuration.
+# Loaded by backend/core/config.py. Environment variables VG_* override leaf values,
+# e.g. VG_RISK__HIGH_THRESHOLD=0.8
+
+audio:
+  sample_rate: 16000          # Hz, mono everywhere
+  chunk_seconds: 1.0          # analysis window length
+  hop_seconds: 0.5            # stride between windows
+  pcm_format: int16           # wire format from the browser: int16 | float32
+
+feature_extractor:
+  # dummy | wav2vec2 | indicwav2vec (gated, needs HF token)
+  backend: wav2vec2
+  # streaming default: wav2vec2-base — ~0.45 s / 1 s chunk on CPU, keeps up at the 0.5 s hop.
+  # for offline / high-accuracy eval use facebook/wav2vec2-xls-r-300m (multilingual, ~1 s/chunk;
+  # raise hop_seconds to 1.0) or ai4bharat/indicwav2vec-hindi (best for Indian langs, gated).
+  model_id: facebook/wav2vec2-base
+  layer: -1                   # which hidden layer to take frame features from
+  frozen: true
+  feat_dim: 768              # wav2vec2-base hidden size (real extractors self-report this)
+
+classifier:
+  embed_dim: 256              # AASIST SSL_BACKEND_aasist output dim
+  num_classes: 2              # [bonafide, spoof]
+  checkpoint: backend/models/aasist_indicw2v.pt   # created by training/ (absent on Day 1)
+  device: cpu                 # cpu | cuda
+
+risk:
+  window: 10                  # rolling window size (chunks)
+  weighting: linear           # linear | exponential | uniform
+  low_threshold: 0.40
+  medium_threshold: 0.60
+  high_threshold: 0.75
+  high_consecutive: 3         # consecutive chunks above high_threshold to latch HIGH
+  alert_cooldown_seconds: 30
+
+webhook:
+  enabled: false
+  url: ""                     # POST target on HIGH transition
+  timeout_seconds: 5
+
+server:
+  host: 0.0.0.0
+  port: 8000
+  cors_origins: ["*"]

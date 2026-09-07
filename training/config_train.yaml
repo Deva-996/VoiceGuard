@@ -1,0 +1,43 @@
+# Training config for wav2vec2 -> AASIST spoof detector.
+seed: 42
+device: auto              # auto | cpu | cuda
+
+manifests:
+  train: data/manifests/train.tsv
+  dev: data/manifests/dev.tsv
+  eval: data/manifests/eval.tsv
+
+cache_dir: data/processed/feat_cache   # per-utt SSL features (training.features)
+
+frontend:
+  # keep in sync with config/config.yaml feature_extractor for train/serve parity
+  model_id: facebook/wav2vec2-base
+  layer: -1
+  stage2_unfreeze_epoch: null   # int -> unfreeze frontend at that epoch (needs GPU)
+
+classifier:
+  embed_dim: 256
+  num_classes: 2
+
+batch_size: 32
+num_workers: 0            # Windows: keep 0 unless you know your setup handles spawn
+epochs: 30
+max_frames: 400          # cap on cached feature frames per clip (~8 s at 20 ms shift)
+
+optimizer:
+  name: adam
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  frontend_lr_mult: 0.1
+
+loss:
+  name: weighted_ce      # weighted_ce | oc_softmax
+  bonafide_weight: 1.0
+  spoof_weight: 1.0       # ASVspoof2019 LA train is ~9x spoof; raise bonafide_weight if needed
+
+augment:
+  rawboost: false         # ASVspoof2021-style channel/codec aug (stage-2 / GPU)
+
+checkpoint:
+  out: backend/models/aasist_indicw2v.pt
+  select_metric: dev_eer

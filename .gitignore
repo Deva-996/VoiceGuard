@@ -1,0 +1,43 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# --- VoiceGuard: never commit data / weights / generated audio ---
+data/raw/*
+data/processed/*
+data/generated/*
+data/manifests/*
+!data/**/.gitkeep
+backend/models/*
+!backend/models/.gitkeep
+*.pt
+*.pth
+*.onnx
+*.ckpt
+s3prl_hub/
+hf_cache/
+
+# --- audio / scratch ---
+*.wav
+*.flac
+*.mp3
+*.ogg
+!tests/fixtures/*.wav
+scratch/
+*.log
+
+# --- editors / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- reference clone: keep out of our history ---
+third_party/wedefense/

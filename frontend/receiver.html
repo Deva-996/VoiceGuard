@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VoiceGuard — Receiver</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <main class="wrap">
+    <h1>Receiver</h1>
+    <p>Answers the call, streams incoming audio to the backend, shows live risk. [Day 6]</p>
+
+    <section class="panel">
+      <label>Offer SDP (paste from caller)
+        <textarea id="remoteSdp" rows="4"></textarea>
+      </label>
+      <button id="answer">Create answer</button>
+      <label>Answer SDP (copy to caller)
+        <textarea id="localSdp" rows="4" readonly></textarea>
+      </label>
+      <p id="status" class="status">idle</p>
+    </section>
+
+    <section class="panel gauge-panel">
+      <div id="gauge" class="gauge" data-level="NONE">
+        <span id="gaugeScore">0.00</span>
+        <span id="gaugeLevel">NONE</span>
+      </div>
+      <div id="alertBanner" class="alert-banner" hidden>⚠ HIGH RISK — likely synthetic voice</div>
+      <ul id="log" class="log"></ul>
+    </section>
+
+    <audio id="remoteAudio" autoplay></audio>
+  </main>
+  <script src="/static/js/webrtc.js"></script>
+  <script src="/static/js/dashboard.js"></script>
+  <script src="/static/js/receiver.js"></script>
+</body>
+</html>
