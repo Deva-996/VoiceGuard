@@ -39,6 +39,44 @@ from backend.core import get_config
 router = APIRouter()
 
 
+# --------------------------------------------------------------------------- signaling relay
+# Minimal room-based WebRTC signaling so caller/receiver auto-connect by a shared code
+# instead of copy-pasting SDP. Not for production (no auth, in-memory, single worker).
+_rooms: dict[str, list[WebSocket]] = {}
+
+
+@router.websocket("/ws/signal/{room}")
+async def signal(ws: WebSocket, room: str) -> None:
+    await ws.accept()
+    peers = _rooms.setdefault(room, [])
+    if len(peers) >= 2:
+        await ws.send_json({"type": "full"})
+        await ws.close()
+        return
+    peers.append(ws)
+    await ws.send_json({"type": "joined", "role": "caller" if len(peers) == 1 else "receiver"})
+    if len(peers) == 2:
+        for p in peers:
+            await p.send_json({"type": "ready"})
+    try:
+        while True:
+            msg = await ws.receive_text()
+            for p in list(peers):
+                if p is not ws:
+                    with contextlib.suppress(Exception):
+                        await p.send_text(msg)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        if ws in peers:
+            peers.remove(ws)
+        for p in list(peers):
+            with contextlib.suppress(Exception):
+                await p.send_json({"type": "peer-left"})
+        if not peers:
+            _rooms.pop(room, None)
+
+
 @router.websocket("/ws/stream")
 async def stream(ws: WebSocket) -> None:
     await ws.accept()

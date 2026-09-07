@@ -12,16 +12,17 @@
     <p>Real-time AI voice-cloning detection for live calls.</p>
     <div class="cards">
       <a class="card" href="/caller.html">
-        <h2>Caller tab</h2>
-        <p>Opens the mic and connects to the receiver over WebRTC.</p>
+        <h2>Caller</h2>
+        <p>Opens the mic and connects to the receiver by room code.</p>
       </a>
       <a class="card" href="/receiver.html">
-        <h2>Receiver tab</h2>
-        <p>Answers the call, streams incoming audio to the backend, shows the live risk gauge.</p>
+        <h2>Receiver</h2>
+        <p>Joins the room, streams incoming audio to the backend, shows the live risk gauge.</p>
       </a>
     </div>
-    <p class="hint">Demo: open both tabs, connect them, then speak (or play a deepfake clip)
-      into the caller mic.</p>
+    <p class="hint">Demo: open both pages (same room code), click connect on each, then speak
+      — or play a deepfake clip — into the caller mic. The receiver's gauge tracks the rolling
+      spoof risk and raises a HIGH alert when it's sustained.</p>
   </main>
 </body>
 </html>

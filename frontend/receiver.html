@@ -9,16 +9,13 @@
 <body>
   <main class="wrap">
     <h1>Receiver</h1>
-    <p>Answers the call, streams incoming audio to the backend, shows live risk. [Day 6]</p>
+    <p>Answers the call, streams incoming audio to the backend, shows the live risk score.</p>
 
     <section class="panel">
-      <label>Offer SDP (paste from caller)
-        <textarea id="remoteSdp" rows="4"></textarea>
+      <label>Room code
+        <input id="room" value="demo" autocomplete="off" />
       </label>
-      <button id="answer">Create answer</button>
-      <label>Answer SDP (copy to caller)
-        <textarea id="localSdp" rows="4" readonly></textarea>
-      </label>
+      <button id="answer">Join &amp; analyse</button>
       <p id="status" class="status">idle</p>
     </section>
 
@@ -28,6 +25,7 @@
         <span id="gaugeLevel">NONE</span>
       </div>
       <div id="alertBanner" class="alert-banner" hidden>⚠ HIGH RISK — likely synthetic voice</div>
+      <p id="meta"></p>
       <ul id="log" class="log"></ul>
     </section>
 

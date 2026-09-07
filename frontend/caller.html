@@ -9,17 +9,14 @@
 <body>
   <main class="wrap">
     <h1>Caller</h1>
-    <p>Shares mic audio with the receiver over WebRTC. [Day 6]</p>
+    <p>Shares mic audio with the receiver over WebRTC. Open <a href="/receiver.html">the receiver</a>
+      in another tab (or device), use the same room code.</p>
 
     <section class="panel">
-      <button id="start">Start mic &amp; create offer</button>
-      <label>Offer SDP (copy to receiver)
-        <textarea id="localSdp" rows="4" readonly></textarea>
+      <label>Room code
+        <input id="room" value="demo" autocomplete="off" />
       </label>
-      <label>Answer SDP (paste from receiver)
-        <textarea id="remoteSdp" rows="4"></textarea>
-      </label>
-      <button id="connect" disabled>Connect</button>
+      <button id="start">Start mic &amp; connect</button>
       <p id="status" class="status">idle</p>
     </section>
   </main>

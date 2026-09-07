@@ -1,25 +1,25 @@
-// Caller tab: capture mic, offer to receiver. [Day 6]
+// Caller tab: capture mic, connect to the receiver by room code.
 (() => {
   const $ = (id) => document.getElementById(id);
   const setStatus = (s) => ($("status").textContent = s);
   let pc, stream;
 
   $("start").onclick = async () => {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    pc = VG.createPeer();
-    stream.getTracks().forEach((t) => pc.addTrack(t, stream));
-    pc.onconnectionstatechange = () => setStatus("peer: " + pc.connectionState);
+    try {
+      const room = ($("room").value || "").trim();
+      if (!room) return setStatus("enter a room code");
+      $("start").disabled = true;
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    await VG.waitForIce(pc);
-    $("localSdp").value = VG.encodeSdp(pc.localDescription);
-    $("connect").disabled = false;
-    setStatus("offer ready — send it to the receiver");
-  };
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      pc = VG.createPeer();
+      stream.getTracks().forEach((t) => pc.addTrack(t, stream));
 
-  $("connect").onclick = async () => {
-    await pc.setRemoteDescription(VG.decodeSdp($("remoteSdp").value));
-    setStatus("connected");
+      setStatus("connecting…");
+      await VG.autoConnect("caller", room, pc, setStatus);
+      setStatus("connected — talk (or play a clip) into the mic");
+    } catch (e) {
+      setStatus("error: " + e.message);
+      $("start").disabled = false;
+    }
   };
 })();

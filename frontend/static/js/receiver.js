@@ -1,53 +1,77 @@
-// Receiver tab: answer the call, capture the remote stream, stream PCM to the backend. [Day 6]
+// Receiver tab: join by room code, capture the remote stream, stream PCM to the backend.
 (() => {
   const $ = (id) => document.getElementById(id);
   const setStatus = (s) => ($("status").textContent = s);
-  let pc;
+  let pc, ws, ctx;
 
   $("answer").onclick = async () => {
-    pc = VG.createPeer();
-    pc.ontrack = (ev) => {
-      $("remoteAudio").srcObject = ev.streams[0];
-      startStreaming(ev.streams[0]);
-    };
-    pc.onconnectionstatechange = () => setStatus("peer: " + pc.connectionState);
+    try {
+      const room = ($("room").value || "").trim();
+      if (!room) return setStatus("enter the same room code as the caller");
+      $("answer").disabled = true;
 
-    await pc.setRemoteDescription(VG.decodeSdp($("remoteSdp").value));
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    await VG.waitForIce(pc);
-    $("localSdp").value = VG.encodeSdp(pc.localDescription);
-    setStatus("answer ready — send it back to the caller");
+      pc = VG.createPeer();
+      pc.ontrack = (ev) => {
+        $("remoteAudio").srcObject = ev.streams[0];
+        startStreaming(ev.streams[0]);
+      };
+
+      setStatus("connecting…");
+      await VG.autoConnect("receiver", room, pc, setStatus);
+      setStatus("connected — analysing incoming audio");
+    } catch (e) {
+      setStatus("error: " + e.message);
+      $("answer").disabled = false;
+    }
   };
 
   async function startStreaming(remoteStream) {
-    const cfg = await fetch("/config").then((r) => r.json());
-    const targetSr = cfg.audio.sample_rate;
+    await fetch("/config").then((r) => r.json()).catch(() => ({}));
 
-    const ctx = new AudioContext();
+    ctx = new AudioContext();
     const src = ctx.createMediaStreamSource(remoteStream);
 
-    // AudioWorklet is the right tool; ScriptProcessor kept here for a dependency-free skeleton.
-    const node = ctx.createScriptProcessor(4096, 1, 1);
-    const ws = new WebSocket(`ws://${location.host}/ws/stream`);
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    ws = new WebSocket(`${proto}://${location.host}/ws/stream`);
     ws.binaryType = "arraybuffer";
-    ws.onopen = () => ws.send(JSON.stringify({ type: "config", input_sample_rate: ctx.sampleRate }));
+    ws.onopen = () =>
+      ws.send(JSON.stringify({ type: "config", input_sample_rate: ctx.sampleRate }));
     ws.onmessage = (ev) => VG.dashboard.handle(JSON.parse(ev.data));
     ws.onclose = () => setStatus("ws closed");
+    ws.onerror = () => setStatus("ws error");
 
-    node.onaudioprocess = (e) => {
-      if (ws.readyState !== WebSocket.OPEN) return;
-      const f32 = e.inputBuffer.getChannelData(0);
-      const i16 = new Int16Array(f32.length);
-      for (let i = 0; i < f32.length; i++) {
-        const s = Math.max(-1, Math.min(1, f32[i]));
-        i16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-      }
-      ws.send(i16.buffer);
-    };
+    const send = (buf) => ws.readyState === WebSocket.OPEN && ws.send(buf);
 
-    src.connect(node);
-    node.connect(ctx.destination);
-    setStatus(`streaming @ ${ctx.sampleRate} Hz -> backend (target ${targetSr} Hz)`);
+    try {
+      await ctx.audioWorklet.addModule("/static/js/pcm-worklet.js");
+      const node = new AudioWorkletNode(ctx, "pcm-worklet", {
+        processorOptions: { frameMs: 85 },
+      });
+      node.port.onmessage = (e) => send(e.data);
+      src.connect(node);
+      const sink = ctx.createGain();
+      sink.gain.value = 0; // don't echo the caller back out
+      node.connect(sink).connect(ctx.destination);
+      setStatus(`streaming @ ${ctx.sampleRate} Hz → backend (AudioWorklet)`);
+    } catch (e) {
+      const node = ctx.createScriptProcessor(4096, 1, 1);
+      node.onaudioprocess = (ev) => {
+        const f32 = ev.inputBuffer.getChannelData(0);
+        const i16 = new Int16Array(f32.length);
+        for (let i = 0; i < f32.length; i++) {
+          const s = Math.max(-1, Math.min(1, f32[i]));
+          i16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        }
+        send(i16.buffer);
+      };
+      src.connect(node);
+      node.connect(ctx.destination);
+      setStatus(`streaming @ ${ctx.sampleRate} Hz → backend (ScriptProcessor fallback)`);
+    }
   }
+
+  window.addEventListener("beforeunload", () => {
+    try { ws && ws.send(JSON.stringify({ type: "end" })); } catch (_) {}
+    try { ctx && ctx.close(); } catch (_) {}
+  });
 })();
