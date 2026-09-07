@@ -1,58 +1,87 @@
 # VoiceGuard
 
-Real-time AI voice-cloning detection for live calls. Streams call audio to a backend that
-runs **IndicWav2Vec → AASIST** inference per chunk and returns a rolling **risk score**, with
-a **HIGH alert** (and webhook) when spoofing is sustained.
+Real-time AI voice-cloning / deepfake detection for live calls. Incoming call audio is
+streamed to a backend that runs **wav2vec2 → AASIST** inference on ~1 s chunks and returns a
+rolling **spoof-risk score**, raising a **HIGH alert** (and firing a webhook) when synthetic
+speech is sustained.
 
-Architecture, dataset plan, and the 7-day build schedule live in **[CLAUDE.md](./CLAUDE.md)**.
+- **Detection:** an SSL wav2vec2 frontend (XLS-R / IndicWav2Vec / wav2vec2-base) → vendored
+  **AASIST** spectro-temporal graph-attention backend → linear head → `fake_prob = P(spoof)`.
+- **Real-time:** `wav2vec2-base` runs in real time on CPU at the 0.5 s hop; the WS handler
+  drops stale windows and runs inference off the receive loop so latency stays bounded.
+- **Risk engine:** rolling weighted average over the last 10 chunks; `LOW`/`MEDIUM`/`HIGH`
+  thresholds; HIGH latches after 3 sustained chunks; webhook fires once on the transition.
+- **Multilingual:** trained on ASVspoof 2019/2021 LA + In-the-Wild + a self-built Indian set
+  (IndicTTS genuine vs. content-matched MMS-TTS fakes: hi, ta, te, bn, mr, gu).
+
+Full architecture and the build plan: **[CLAUDE.md](./CLAUDE.md)** · training: **[docs/TRAINING.md](./docs/TRAINING.md)**
 
 ## Setup
 
 ```bash
-python -m venv .venv && . .venv/Scripts/activate        # Windows: .venv\Scripts\activate
 pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
-
-# reference repo (AASIST source; not packaged)
-git clone --depth 1 https://github.com/zlin0/wedefense third_party/wedefense
 ```
 
-## Day 1 — verify AASIST runs on sample audio
+## Run the demo
 
 ```bash
-python scripts/make_sample_audio.py        # writes tests/fixtures/sample_*.wav
-python scripts/day1_sample_inference.py     # waveform -> dummy features -> AASIST -> fake_prob
-pytest -q                                   # chunker + risk engine + pipeline tests
+uvicorn backend.main:app                    # loads wav2vec2-base + backend/models/aasist_indicw2v.pt if present
+#   VG_FEATURE_EXTRACTOR__BACKEND=dummy uvicorn ...   for a light, model-free run
 ```
 
-`day1_sample_inference.py` uses random-init AASIST weights and a placeholder feature
-extractor — the scores are not meaningful yet; it proves the forward path works. Real
-features (IndicWav2Vec) land on Day 3, trained weights after that.
+Open **http://localhost:8000/** → *Caller* and *Receiver* pages. Enter the same room code on
+each, click connect. Speak (or play a clip) into the caller's mic; the receiver's gauge
+tracks the rolling spoof risk and banners a HIGH alert when it's sustained.
 
-## Run the backend (Day 5+)
+- `GET /health` · `GET /config` · `POST /score` (multipart `file`) · `WS /ws/stream` · `WS /ws/signal/<room>`
+
+Score a single clip end to end (with a webhook catcher):
 
 ```bash
-uvicorn backend.main:app --reload
-#  GET  /health   GET /config   POST /score (multipart file)   WS /ws/stream
-#  frontend served at /  (caller.html / receiver.html)
+VG_WEBHOOK__ENABLED=true VG_WEBHOOK__URL=http://localhost:9099/hook uvicorn backend.main:app &
+python scripts/e2e_demo.py --wav path/to/deepfake.wav --realtime
+```
+
+## Train the detector
+
+The live pipeline auto-loads `backend/models/aasist_indicw2v.pt`. To produce one, run
+`notebooks/train_kaggle.ipynb` on a GPU (Kaggle P100/T4) — it pulls data from HF, generates
+content-matched fakes, fine-tunes wav2vec2 + AASIST with RawBoost + OC-Softmax, and evaluates
+per dataset/language. Download the checkpoint into `backend/models/`. See
+[docs/TRAINING.md](./docs/TRAINING.md). Locally:
+
+```bash
+python scripts/download_datasets.py --only asvspoof2019,indictts,fleurs
+python scripts/generate_indian_fakes.py --n 1200
+python scripts/prepare_manifests.py
+python -m training.train --config training/config_train.yaml          # e2e on GPU, frozen on CPU
+python -m training.evaluate --checkpoint backend/models/aasist_indicw2v.pt \
+    --manifest data/manifests/eval.tsv --by dataset,language
 ```
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `backend/inference/` | feature extractor, vendored AASIST, classifier, pipeline |
-| `backend/audio/` | PCM decode + chunker (streaming) |
-| `backend/scoring/` | rolling risk engine + thresholds |
-| `backend/alerts/` | webhook dispatch |
-| `backend/api/` + `backend/main.py` | FastAPI REST + WebSocket |
-| `frontend/` | WebRTC caller/receiver tabs + live dashboard |
-| `training/` | dataset / train / evaluate (post-demo) |
-| `scripts/` | sample audio, dataset download, Indian-fake generation, manifests |
-| `config/config.yaml` | thresholds, model paths, sample rate |
+| `backend/inference/` | `Wav2Vec2Extractor`, vendored AASIST, classifier, detection pipeline |
+| `backend/audio/` | PCM decode + streaming chunker |
+| `backend/scoring/` · `backend/alerts/` | rolling risk engine · webhook dispatch |
+| `backend/api/` · `backend/main.py` | FastAPI REST + WebSocket (`/ws/stream`, `/ws/signal`) |
+| `frontend/` | WebRTC caller/receiver + live dashboard (AudioWorklet capture) |
+| `training/` | feature cache, RawBoost, losses, EER/t-DCF, `EndToEndDetector`, train, evaluate |
+| `scripts/` | dataset download, fake generation, manifests, benchmarks, demo checks |
+| `config/config.yaml` | thresholds, model id, sample rate |
 
 ## Constraints
 
-iOS cannot intercept native calls (Apple sandbox), so VoiceGuard operates at the
-WebRTC/browser layer — works everywhere including iOS Safari. In production the audio feed
-comes from a VoIP gateway / PBX; the browser demo stands in for that.
+- iOS can't intercept native calls (Apple sandbox) → VoiceGuard runs at the WebRTC/browser
+  layer, which works everywhere including iOS Safari. In production the feed comes from a
+  VoIP gateway / PBX (SIPREC, Twilio Media Streams, …); the browser demo stands in for that.
+- `wav2vec2-base` is English-pretrained; the multilingual frontends (XLS-R, IndicWav2Vec)
+  are stronger on Indian-language calls but need `hop_seconds: 1.0` on CPU. See CLAUDE.md §9.
+
+## Attribution
+
+AASIST backend vendored from [WeDefense](https://github.com/zlin0/wedefense) (`aasist.py`, MIT,
+NAVER Corp / Hemlata Tak). Built with Claude Code.
