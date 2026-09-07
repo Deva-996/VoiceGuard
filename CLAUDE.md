@@ -165,14 +165,13 @@ The 7-day plan builds the *system*; this track makes detection real.
 
 | Phase | Work | Status |
 |---|---|---|
-| **P1** | Training + eval code: `training/features.py` (SSL feature cache), `losses.py` (weighted-CE, OC-Softmax), `metrics.py` (EER, CM min-tDCF), `dataset.py` (`ManifestDataset` / `FeatureDataset`), `train.py` (frozen-frontend staged loop, dev-EER checkpoint), `evaluate.py` (pooled + per-slice). Unit-tested offline with the dummy frontend. | **DONE** |
-| **P2** | Data acquisition (`scripts/download_datasets.py`) — ASVspoof 2019 LA ✅; ASVspoof 2021 LA eval, In-the-Wild, IndicTTS, FLEURS downloading | in progress |
+| **P1** | Training + eval code — `features.py` (SSL cache), `losses.py` (weighted-CE + OC-Softmax), `metrics.py` (EER, min-tDCF), `augment.py` (RawBoost), `model.py` (`EndToEndDetector`), `dataset.py`, `train.py` (frozen **and** e2e modes, staged unfreeze, balanced sampler), `evaluate.py`, `pipeline_run.py`. Serving loads fine-tuned frontend weights from the checkpoint. Unit-tested offline. | **DONE** |
+| **P2** | Data (`scripts/download_datasets.py`, all non-gated) — ASVspoof 2019 LA ✅, IndicTTS 6 langs ✅, In-the-Wild ✅; ASVspoof 2021 LA eval + FLEURS downloading | ~90% |
 | **P3** | `scripts/generate_indian_fakes.py` — MMS-TTS fakes, content-matched to IndicTTS. Code done + smoke-tested; full run pending genuine data. | code done |
 | **P4** | `scripts/prepare_manifests.py` — per-dataset parsers → train/dev/eval TSVs. Code done; ASVspoof2019 parser verified. | code done |
-| **P5** | Cache features (overnight, CPU) → train frozen-frontend baseline → checkpoint to `backend/models/aasist_indicw2v.pt` (live pipeline auto-loads). Expected ~8–12% EER. | blocked on P2 |
+| **P5** | **Train on GPU (Kaggle P100)** — `notebooks/train_kaggle.ipynb`. Fine-tune XLS-R **and** IndicWav2Vec + RawBoost + OC-Softmax, A/B on the Indian slices → `backend/models/aasist_indicw2v.pt`. Target ~<1% EER (ASVspoof), meaningful cross-lingual. | ready to launch |
 | **P6** | Frontend: real WebRTC caller/receiver, AudioWorklet capture, live dashboard. | TODO |
 | **P7** | Integration + polish: real deepfake clip end-to-end, README, screenshots. | TODO |
-| **P8** (opt) | GPU: stage-2 unfreeze, XLS-R / IndicWav2Vec A/B, RawBoost aug → competitive EER. | needs GPU |
 
 ## 9. Known constraints
 

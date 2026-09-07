@@ -63,11 +63,16 @@ class ManifestDataset(Dataset):
         sample_rate: int = 16000,
         crop_seconds: float = 4.0,
         train: bool = True,
+        augment=None,
+        limit: int | None = None,
     ) -> None:
         self.sample_rate = sample_rate
         self.crop_samples = int(sample_rate * crop_seconds)
         self.train = train
+        self.augment = augment  # callable(np.ndarray)->np.ndarray, applied when train=True
         self.samples = read_manifest(manifest)
+        if limit:
+            self.samples = self.samples[:limit]
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -91,7 +96,10 @@ class ManifestDataset(Dataset):
 
             wav = resample_to_16k(np.asarray(wav), sr)
         wav = self._crop_or_pad(np.asarray(wav, dtype="float32"))
-        return torch.from_numpy(wav), s.label, s.utt_id
+        if self.train and self.augment is not None:
+            wav = np.asarray(self.augment(wav), dtype="float32")
+            wav = self._crop_or_pad(wav)  # augment may change length
+        return torch.from_numpy(np.ascontiguousarray(wav)), s.label, s.utt_id
 
 
 class FeatureDataset(Dataset):
@@ -140,3 +148,8 @@ class FeatureDataset(Dataset):
 def collate_features(batch):
     feats, labels, uids = zip(*batch)
     return torch.stack(feats), torch.tensor(labels, dtype=torch.long), list(uids)
+
+
+def collate_waveforms(batch):
+    wavs, labels, uids = zip(*batch)
+    return torch.stack(wavs), torch.tensor(labels, dtype=torch.long), list(uids)

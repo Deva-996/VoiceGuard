@@ -20,53 +20,48 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _build_model(ckpt: dict):
+def _build_classifier(ckpt: dict, feat_dim: int):
     from backend.inference.classifier import AASISTClassifier
 
-    cfg = ckpt.get("config", {})
-    clf = cfg.get("classifier", {"embed_dim": 256, "num_classes": 2})
-    model = AASISTClassifier(
-        feat_dim=int(ckpt.get("feat_dim", 768)),
-        embed_dim=clf.get("embed_dim", 256),
-        num_classes=clf.get("num_classes", 2),
-    )
+    clf = ckpt.get("config", {}).get("classifier", {"embed_dim": 256, "num_classes": 2})
+    model = AASISTClassifier(feat_dim=feat_dim, embed_dim=clf.get("embed_dim", 256),
+                             num_classes=clf.get("num_classes", 2))
     model.load_state_dict(ckpt["model"])
-    model.eval()
-    return model, cfg
+    return model.eval()
 
 
 @torch.no_grad()
 def score_manifest(checkpoint: str | Path, manifest: str | Path, device: str = "cpu",
                    limit: int | None = None):
+    import soundfile as sf
+
     from backend.inference.feature_extractor import Wav2Vec2Extractor
     from training.dataset import read_manifest
     from training.features import FeatureCache
 
     ckpt = torch.load(checkpoint, map_location="cpu", weights_only=False)
-    model, cfg = _build_model(ckpt)
-    model.to(device)
+    cfg = ckpt.get("config", {})
+    fe = cfg.get("frontend") or {"model_id": ckpt.get("frontend_model_id", "facebook/wav2vec2-base"),
+                                 "layer": ckpt.get("layer", -1)}
+    finetuned = ckpt.get("frontend")  # state dict if the frontend was fine-tuned
 
-    fe = cfg.get("frontend", {"model_id": "facebook/wav2vec2-base", "layer": -1})
-    cache = FeatureCache(
+    extractor = Wav2Vec2Extractor(model_id=fe["model_id"], layer=fe["layer"], frozen=True,
+                                  device=device, finetuned_state=finetuned)
+    model = _build_classifier(ckpt, extractor.feat_dim).to(device)
+
+    cache = None if finetuned else FeatureCache(
         cfg.get("cache_dir", str(ROOT / "data" / "processed" / "feat_cache")),
-        fe["model_id"], fe["layer"],
-    )
-    extractor = None  # lazy — only build if some utt isn't cached
+        fe["model_id"], fe["layer"])
 
     rows = read_manifest(manifest)
     if limit:
         rows = rows[:limit]
 
-    import soundfile as sf
-
     out = []
     for i, s in enumerate(rows, 1):
-        if cache.has(s.utt_id):
+        if cache is not None and cache.has(s.utt_id):
             feats = torch.from_numpy(cache.load(s.utt_id))
         else:
-            if extractor is None:
-                extractor = Wav2Vec2Extractor(model_id=fe["model_id"], layer=fe["layer"],
-                                              frozen=True, device=device)
             wav, sr = sf.read(s.path, dtype="float32", always_2d=False)
             if getattr(wav, "ndim", 1) == 2:
                 wav = wav.mean(axis=1)
@@ -75,9 +70,9 @@ def score_manifest(checkpoint: str | Path, manifest: str | Path, device: str = "
 
                 wav = resample_to_16k(np.asarray(wav), sr)
             feats = extractor.extract(torch.from_numpy(np.asarray(wav, dtype="float32")))
-            cache.save(s.utt_id, feats.numpy())
-        logits = model(feats.unsqueeze(0).to(device))
-        fake_prob = float(torch.softmax(logits, dim=-1)[0, 1])
+            if cache is not None:
+                cache.save(s.utt_id, feats.numpy())
+        fake_prob = float(torch.softmax(model(feats.unsqueeze(0).to(device)), dim=-1)[0, 1])
         out.append((s, fake_prob))
         if i % 500 == 0:
             print(f"  scored {i}/{len(rows)}")

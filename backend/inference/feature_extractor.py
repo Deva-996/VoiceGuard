@@ -90,6 +90,7 @@ class Wav2Vec2Extractor(BaseFeatureExtractor):
         layer: int = -1,
         frozen: bool = True,
         device: str = "cpu",
+        finetuned_state: dict | None = None,
     ) -> None:
         from transformers import AutoFeatureExtractor, AutoModel  # lazy: heavy, optional dep
 
@@ -102,6 +103,11 @@ class Wav2Vec2Extractor(BaseFeatureExtractor):
         self.sampling_rate = int(getattr(self._fe, "sampling_rate", 16000))
 
         self.model = AutoModel.from_pretrained(model_id).to(self.device)
+        if finetuned_state:  # weights from a stage-2 fine-tune (see training/model.py)
+            missing, unexpected = self.model.load_state_dict(finetuned_state, strict=False)
+            if missing or unexpected:
+                print(f"[Wav2Vec2Extractor] fine-tuned load: {len(missing)} missing, "
+                      f"{len(unexpected)} unexpected")
         self.model.eval()
         if frozen:
             for p in self.model.parameters():
@@ -142,8 +148,9 @@ class IndicWav2VecExtractor(Wav2Vec2Extractor):
         super().__init__(model_id=model_id, layer=layer, frozen=frozen, device=device)
 
 
-def build_feature_extractor(cfg) -> BaseFeatureExtractor:
-    """Instantiate from a ``FeatureExtractorConfig``."""
+def build_feature_extractor(cfg, finetuned_state: dict | None = None) -> BaseFeatureExtractor:
+    """Instantiate from a ``FeatureExtractorConfig``. ``finetuned_state`` (from a stage-2
+    training checkpoint) is applied to the wav2vec2 weights after loading."""
     backend = getattr(cfg, "backend", "dummy").lower()
     if backend == "dummy":
         return DummyFeatureExtractor(feat_dim=cfg.feat_dim)
@@ -155,5 +162,6 @@ def build_feature_extractor(cfg) -> BaseFeatureExtractor:
             model_id=model_id,
             layer=getattr(cfg, "layer", -1),
             frozen=getattr(cfg, "frozen", True),
+            finetuned_state=finetuned_state,
         )
     raise ValueError(f"unknown feature_extractor backend: {backend!r}")

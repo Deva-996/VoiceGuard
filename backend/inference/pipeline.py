@@ -43,7 +43,28 @@ class DetectionPipeline:
 
     @classmethod
     def from_config(cls, cfg) -> "DetectionPipeline":
-        extractor = build_feature_extractor(cfg.feature_extractor)
+        import copy
+
+        # A training checkpoint may bundle fine-tuned frontend weights + the frontend id it
+        # was trained with (training/model.py). Honour those over config so serving == training.
+        bundle = {}
+        ckpt_path = cfg.classifier.checkpoint_path
+        if ckpt_path.exists():
+            try:
+                loaded = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+                if isinstance(loaded, dict):
+                    bundle = loaded
+            except Exception as exc:  # noqa: BLE001
+                print(f"[DetectionPipeline] could not read checkpoint {ckpt_path}: {exc}")
+
+        fe_cfg = cfg.feature_extractor
+        if bundle.get("frontend_model_id"):
+            fe_cfg = copy.copy(fe_cfg)
+            fe_cfg.backend = "wav2vec2"
+            fe_cfg.model_id = bundle["frontend_model_id"]
+            fe_cfg.layer = bundle.get("layer", fe_cfg.layer)
+
+        extractor = build_feature_extractor(fe_cfg, finetuned_state=bundle.get("frontend"))
         classifier = AASISTClassifier.from_config(cfg.classifier, feat_dim=extractor.feat_dim)
         return cls(
             extractor=extractor,

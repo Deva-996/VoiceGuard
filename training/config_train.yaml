@@ -1,42 +1,48 @@
 # Training config for wav2vec2 -> AASIST spoof detector.
 seed: 42
-device: auto              # auto | cpu | cuda
+device: auto              # auto | cpu | cuda   (cuda/auto+gpu -> e2e mode; else frozen)
 
 manifests:
   train: data/manifests/train.tsv
   dev: data/manifests/dev.tsv
   eval: data/manifests/eval.tsv
 
-cache_dir: data/processed/feat_cache   # per-utt SSL features (training.features)
+cache_dir: data/processed/feat_cache   # frozen-mode per-utt SSL features
 
 frontend:
-  # keep in sync with config/config.yaml feature_extractor for train/serve parity
-  model_id: facebook/wav2vec2-base
+  # keep model_id in sync with config/config.yaml for serving parity, UNLESS fine-tuned
+  # (then the tuned weights ride in the checkpoint and the pipeline picks them up).
+  model_id: facebook/wav2vec2-xls-r-300m
   layer: -1
-  stage2_unfreeze_epoch: null   # int -> unfreeze frontend at that epoch (needs GPU)
+  stage2_unfreeze_epoch: 6   # e2e: frontend frozen for N epochs, then unfrozen at lr*mult
 
 classifier:
   embed_dim: 256
   num_classes: 2
 
-batch_size: 32
-num_workers: 0            # Windows: keep 0 unless you know your setup handles spawn
-epochs: 30
-max_frames: 400          # cap on cached feature frames per clip (~8 s at 20 ms shift)
+batch_size: 8            # e2e (waveform+frontend); frozen mode can go much higher
+grad_accum: 4            # effective batch = batch_size * grad_accum
+num_workers: 2
+epochs: 20
+crop_seconds: 4.0
+max_frames: 400          # frozen mode: cap on cached feature frames per clip
+frozen_max_per_class: 8000   # frozen mode only: cap ASVspoof train per class (cache size)
 
 optimizer:
-  name: adam
+  name: adamw
   lr: 1.0e-4
   weight_decay: 1.0e-4
-  frontend_lr_mult: 0.1
+  frontend_lr_mult: 0.1   # frontend LR after unfreeze
 
 loss:
-  name: weighted_ce      # weighted_ce | oc_softmax
+  name: oc_softmax        # weighted_ce | oc_softmax  (OC-Softmax generalises better)
   bonafide_weight: 1.0
-  spoof_weight: 1.0       # ASVspoof2019 LA train is ~9x spoof; raise bonafide_weight if needed
+  spoof_weight: 1.0
 
 augment:
-  rawboost: false         # ASVspoof2021-style channel/codec aug (stage-2 / GPU)
+  rawboost: true          # e2e only (waveform-level)
+  rawboost_mode: 5        # 1 conv · 2 impulsive · 3 stationary · 4 (1->2) · 5 (1->2 +3) · 6 (1+2)
+  rawboost_p: 0.5
 
 checkpoint:
   out: backend/models/aasist_indicw2v.pt
