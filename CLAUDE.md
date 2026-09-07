@@ -170,8 +170,8 @@ The 7-day plan builds the *system*; this track makes detection real.
 | **P3** | `scripts/generate_indian_fakes.py` — MMS-TTS fakes, content-matched to IndicTTS. Code done + smoke-tested; full run pending genuine data. | code done |
 | **P4** | `scripts/prepare_manifests.py` — per-dataset parsers → train/dev/eval TSVs. Code done; ASVspoof2019 parser verified. | code done |
 | **P5** | **Train on GPU (Kaggle P100)** — `notebooks/train_kaggle.ipynb`. Fine-tune XLS-R **and** IndicWav2Vec + RawBoost + OC-Softmax, A/B on the Indian slices → `backend/models/aasist_indicw2v.pt`. Target ~<1% EER (ASVspoof), meaningful cross-lingual. | ready to launch |
-| **P6** | Frontend: real WebRTC caller/receiver, AudioWorklet capture, live dashboard. | TODO |
-| **P7** | Integration + polish: real deepfake clip end-to-end, README, screenshots. | TODO |
+| **P6** | Frontend — `/ws/signal/<room>` relay + `VG.autoConnect` (room-code, no SDP paste), `pcm-worklet.js` AudioWorklet capture, conic gauge + `dropped` indicator, `wss://` on https. Routes + signaling tested; **browser E2E pending** (P7). | code done |
+| **P7** | Integration + polish: browser E2E with a real deepfake clip → HIGH alert + webhook, README, screenshots. | TODO |
 
 ## 9. Known constraints
 
