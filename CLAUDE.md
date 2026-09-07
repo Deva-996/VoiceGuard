@@ -169,9 +169,9 @@ The 7-day plan builds the *system*; this track makes detection real.
 | **P2** | Data (`scripts/download_datasets.py`, all non-gated) — ASVspoof 2019 LA ✅, IndicTTS 6 langs ✅, In-the-Wild ✅; ASVspoof 2021 LA eval + FLEURS downloading | ~90% |
 | **P3** | `scripts/generate_indian_fakes.py` — MMS-TTS fakes, content-matched to IndicTTS. Code done + smoke-tested; full run pending genuine data. | code done |
 | **P4** | `scripts/prepare_manifests.py` — per-dataset parsers → train/dev/eval TSVs. Code done; ASVspoof2019 parser verified. | code done |
-| **P5** | **Train on GPU (Kaggle P100)** — `notebooks/train_kaggle.ipynb`. Fine-tune XLS-R **and** IndicWav2Vec + RawBoost + OC-Softmax, A/B on the Indian slices → `backend/models/aasist_indicw2v.pt`. Target ~<1% EER (ASVspoof), meaningful cross-lingual. | ready to launch |
-| **P6** | Frontend — `/ws/signal/<room>` relay + `VG.autoConnect` (room-code, no SDP paste), `pcm-worklet.js` AudioWorklet capture, conic gauge + `dropped` indicator, `wss://` on https. Routes + signaling tested; **browser E2E pending** (P7). | code done |
-| **P7** | Integration + polish: browser E2E with a real deepfake clip → HIGH alert + webhook, README, screenshots. | TODO |
+| **P5** | **Train on GPU (Kaggle P100)** — `notebooks/train_kaggle.ipynb` (repo pushed to github.com/Deva-996/VoiceGuard, `REPO_URL` prefilled, resumable across sessions, data+ckpt in `/kaggle/working`). Fine-tune XLS-R **and** IndicWav2Vec + RawBoost + OC-Softmax → A/B → `backend/models/aasist_indicw2v.pt`. | **user launches** |
+| **P6** | Frontend — `/ws/signal/<room>` relay + `VG.autoConnect` (room-code), `pcm-worklet.js` AudioWorklet, conic gauge + `dropped`. Routes + signaling tested; browser E2E pending. | code done |
+| **P7** | `tests/test_e2e_alert.py` (PCM→score→HIGH→webhook, deterministic) ✅; `scripts/e2e_demo.py` (real clip through live backend, webhook catcher). Browser E2E + README + screenshots after the checkpoint. | partial |
 
 ## 9. Known constraints
 
