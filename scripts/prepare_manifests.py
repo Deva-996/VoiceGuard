@@ -85,20 +85,23 @@ def parse_asvspoof2019(split: str) -> list[Row]:
     if not files:
         return []
     out_dir.mkdir(parents=True, exist_ok=True)
-    rows, index = [], []
+    rows, index, done = [], [], 0
     for pqfile in files:
-        tbl = pq.read_table(pqfile)
-        cols = {c: tbl[c].to_pylist() for c in tbl.column_names}
-        for i in range(tbl.num_rows):
-            uid, key, sysid = cols["audio_file_name"][i], cols["key"][i], cols["system_id"][i]
-            dst = out_dir / f"{uid}.flac"
-            if not dst.exists():
-                audio = cols["audio"][i]
-                raw = audio["bytes"] if audio.get("bytes") else Path(audio["path"]).read_bytes()
-                w, sr = sf.read(io.BytesIO(raw))
-                sf.write(dst, w, sr)
-            index.append({"utt_id": uid, "key": key, "system_id": sysid})
-            rows.append(_row(uid, key, sysid))
+        # stream in row-batches — a test shard is >4 GB, don't read_table it whole
+        for batch in pq.ParquetFile(pqfile).iter_batches(batch_size=256):
+            d = batch.to_pydict()
+            for uid, key, sysid, audio in zip(d["audio_file_name"], d["key"],
+                                              d["system_id"], d["audio"]):
+                dst = out_dir / f"{uid}.flac"
+                if not dst.exists():
+                    raw = audio["bytes"] if audio.get("bytes") else Path(audio["path"]).read_bytes()
+                    w, sr = sf.read(io.BytesIO(raw))
+                    sf.write(dst, w, sr)
+                index.append({"utt_id": uid, "key": key, "system_id": sysid})
+                rows.append(_row(uid, key, sysid))
+                done += 1
+                if done % 5000 == 0:
+                    print(f"    {split}: {done} materialised")
     with idx.open("w", encoding="utf-8", newline="") as fh:
         wr = _csv.DictWriter(fh, fieldnames=["utt_id", "key", "system_id"], delimiter="\t")
         wr.writeheader()
