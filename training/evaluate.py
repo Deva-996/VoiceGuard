@@ -20,63 +20,84 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _build_classifier(ckpt: dict, feat_dim: int):
-    from backend.inference.classifier import AASISTClassifier
+def _per_domain_sample(rows, per_domain: int):
+    """Deterministic ~balanced subset per dataset — a representative eval that runs in
+    minutes instead of hours. Keeps all rows of a domain that has fewer than the cap."""
+    import random
+    from collections import defaultdict
 
-    clf = ckpt.get("config", {}).get("classifier", {})
-    embed_dim = ckpt.get("embed_dim", clf.get("embed_dim", 256))
-    num_classes = ckpt.get("num_classes", clf.get("num_classes", 2))
-    model = AASISTClassifier(feat_dim=feat_dim, embed_dim=embed_dim, num_classes=num_classes)
-    model.load_state_dict(ckpt["model"])
-    return model.eval()
+    by_ds = defaultdict(list)
+    for r in rows:
+        by_ds[r.dataset].append(r)
+    rng = random.Random(0)
+    out = []
+    for ds, items in by_ds.items():
+        if len(items) <= per_domain:
+            out += items
+            continue
+        bona = [r for r in items if r.label == 0]
+        spoof = [r for r in items if r.label == 1]
+        rng.shuffle(bona); rng.shuffle(spoof)
+        half = per_domain // 2
+        out += bona[:half] + spoof[:half]
+    return out
 
 
 @torch.no_grad()
 def score_manifest(checkpoint: str | Path, manifest: str | Path, device: str = "cpu",
-                   limit: int | None = None):
+                   limit: int | None = None, per_domain: int | None = None,
+                   batch_size: int = 16, crop_seconds: float = 6.0):
     import soundfile as sf
 
-    from backend.inference.feature_extractor import Wav2Vec2Extractor
+    from backend.audio import resample_to_16k
     from training.dataset import read_manifest
-    from training.features import FeatureCache
+    from training.model import EndToEndDetector
 
     ckpt = torch.load(checkpoint, map_location="cpu", weights_only=False)
     cfg = ckpt.get("config", {})
     fe = cfg.get("frontend") or {"model_id": ckpt.get("frontend_model_id", "facebook/wav2vec2-base"),
                                  "layer": ckpt.get("layer", -1)}
-    finetuned = ckpt.get("frontend")  # state dict if the frontend was fine-tuned
+    clf = cfg.get("classifier", {})
+    embed_dim = ckpt.get("embed_dim", clf.get("embed_dim", 256))
+    num_classes = ckpt.get("num_classes", clf.get("num_classes", 2))
 
-    extractor = Wav2Vec2Extractor(model_id=fe["model_id"], layer=fe["layer"], frozen=True,
-                                  device=device, finetuned_state=finetuned)
-    model = _build_classifier(ckpt, extractor.feat_dim).to(device)
-
-    cache = None if finetuned else FeatureCache(
-        cfg.get("cache_dir", str(ROOT / "data" / "processed" / "feat_cache")),
-        fe["model_id"], fe["layer"])
+    det = EndToEndDetector(model_id=fe["model_id"], layer=fe["layer"],
+                           embed_dim=embed_dim, num_classes=num_classes)
+    if ckpt.get("frontend"):
+        det.frontend.load_state_dict(ckpt["frontend"], strict=False)
+    det.classifier.load_state_dict(ckpt["model"], strict=False)
+    det.set_frontend_trainable(False)
+    det.to(device).eval()
 
     rows = read_manifest(manifest)
+    if per_domain:
+        rows = _per_domain_sample(rows, per_domain)
     if limit:
         rows = rows[:limit]
+    crop = int(16000 * crop_seconds)
+    print(f"scoring {len(rows)} utts (batch {batch_size})")
+
+    def load(path):
+        w, sr = sf.read(path, dtype="float32", always_2d=False)
+        if getattr(w, "ndim", 1) == 2:
+            w = w.mean(axis=1)
+        if sr != 16000:
+            w = resample_to_16k(np.asarray(w), sr)
+        w = np.asarray(w, dtype="float32")
+        if len(w) >= crop:
+            w = w[:crop]
+        else:
+            w = np.tile(w, int(np.ceil(crop / max(len(w), 1))))[:crop]
+        return w
 
     out = []
-    for i, s in enumerate(rows, 1):
-        if cache is not None and cache.has(s.utt_id):
-            feats = torch.from_numpy(cache.load(s.utt_id))
-        else:
-            wav, sr = sf.read(s.path, dtype="float32", always_2d=False)
-            if getattr(wav, "ndim", 1) == 2:
-                wav = wav.mean(axis=1)
-            if sr != 16000:
-                from backend.audio import resample_to_16k
-
-                wav = resample_to_16k(np.asarray(wav), sr)
-            feats = extractor.extract(torch.from_numpy(np.asarray(wav, dtype="float32")))
-            if cache is not None:
-                cache.save(s.utt_id, feats.numpy())
-        fake_prob = float(torch.softmax(model(feats.unsqueeze(0).to(device)), dim=-1)[0, 1])
-        out.append((s, fake_prob))
-        if i % 500 == 0:
-            print(f"  scored {i}/{len(rows)}")
+    for b in range(0, len(rows), batch_size):
+        chunk = rows[b:b + batch_size]
+        wavs = torch.from_numpy(np.stack([load(s.path) for s in chunk])).to(device)
+        probs = torch.softmax(det(wavs), dim=-1)[:, 1].cpu().numpy()
+        out += list(zip(chunk, (float(p) for p in probs)))
+        if (b // batch_size) % 25 == 0:
+            print(f"  {len(out)}/{len(rows)}")
     return out
 
 
@@ -109,10 +130,14 @@ def main() -> int:
     ap.add_argument("--by", default="dataset", help="comma-separated slice columns")
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--per-domain", type=int, default=6000,
+                    help="cap utts per dataset (balanced); 0 = use all")
+    ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--dump", default=None, help="write per-utt scores TSV here")
     args = ap.parse_args()
 
-    scored = score_manifest(args.checkpoint, args.manifest, args.device, args.limit)
+    scored = score_manifest(args.checkpoint, args.manifest, args.device, args.limit,
+                            per_domain=args.per_domain or None, batch_size=args.batch_size)
     if args.dump:
         Path(args.dump).write_text(
             "utt_id\tlabel\tdataset\tlanguage\tfake_prob\n"

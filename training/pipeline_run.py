@@ -62,12 +62,16 @@ def main() -> int:
     sh(*train_cmd)  # train.py builds the feature cache itself, then trains
 
     if ckpt.exists():
+        dev = "cuda" if cfg.get("device") in (None, "auto", "cuda") else "cpu"
         sh(
             "-m", "training.evaluate",
             "--checkpoint", str(ckpt),
             "--manifest", str(ROOT / cfg["manifests"]["eval"]),
             "--by", args.eval_by,
-            "--device", ("cuda" if cfg.get("device") in (None, "auto", "cuda") else "cpu"),
+            "--device", dev,
+            "--per-domain", "6000",
+            "--batch-size", "32" if dev == "cuda" else "8",
+            "--dump", str(ckpt.with_suffix(".eval_scores.tsv")),
         )
     print(f"\nDONE. checkpoint -> {ckpt}")
     return 0
