@@ -74,4 +74,6 @@ class EndToEndDetector(nn.Module):
             "frontend_model_id": self.model_id,
             "layer": self.layer,
             "feat_dim": self.feat_dim,
+            "embed_dim": self.classifier.embed_dim,
+            "num_classes": self.classifier.num_classes,
         }

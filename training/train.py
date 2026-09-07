@@ -35,6 +35,21 @@ def _device(cfg: dict) -> torch.device:
     return torch.device(d)
 
 
+def _balanced_head(samples, n_total):
+    """Deterministic balanced subset: ~n_total/2 per class from the shuffled pool."""
+    import random
+
+    rng = random.Random(0)
+    per = max(n_total // 2, 1)
+    out = []
+    for lab in (0, 1):
+        pool = [s for s in samples if s.label == lab]
+        rng.shuffle(pool)
+        out += pool[:per]
+    rng.shuffle(out)
+    return out
+
+
 def _capped_manifest(path: str, per_class: int) -> str:
     """Write a per-class-capped copy of a manifest next to it; return the new path."""
     import csv
@@ -110,9 +125,11 @@ def _run_frozen(cfg, device, args) -> float:
     build_cache(cfg["manifests"]["dev"], cfg, limit=(args.limit // 4 if args.limit else None))
 
     mf = int(cfg.get("max_frames", 400))
-    dev_lim = max(args.limit // 4, 8) if args.limit else None
+    dev_lim = max(args.limit // 4, 8) if args.limit else cfg.get("dev_subsample")
     tr = FeatureDataset(train_manifest, cache, max_frames=mf, train=True, limit=args.limit)
-    dv = FeatureDataset(cfg["manifests"]["dev"], cache, max_frames=mf, train=False, limit=dev_lim)
+    dv = FeatureDataset(cfg["manifests"]["dev"], cache, max_frames=mf, train=False)
+    if dev_lim:
+        dv.samples = _balanced_head(dv.samples, dev_lim)
     bs = int(cfg.get("batch_size", 32))
     tr_dl = DataLoader(tr, batch_size=bs, shuffle=True, collate_fn=collate_features,
                        num_workers=int(cfg.get("num_workers", 0)))
@@ -129,9 +146,15 @@ def _run_frozen(cfg, device, args) -> float:
 
     scorer = _spoof_scorer(model, loss_fn)
     return _train_loop(cfg, args, model, loss_fn, opt, tr_dl, dv_dl, device, scorer,
-                       save_state=lambda: {"model": model.state_dict(),
-                                           "loss_state": loss_fn.state_dict(),
-                                           "feat_dim": feat_dim, "config": cfg})
+                       save_state=lambda: {
+                           "model": model.state_dict(),
+                           "loss_state": loss_fn.state_dict(),
+                           "feat_dim": feat_dim, "config": cfg,
+                           "embed_dim": cfg["classifier"]["embed_dim"],
+                           "num_classes": cfg["classifier"]["num_classes"],
+                           "frontend_model_id": cfg["frontend"]["model_id"],
+                           "layer": cfg["frontend"]["layer"],
+                       })
 
 
 # ----------------------------------------------------------------- e2e mode (waveform + RawBoost)
@@ -149,10 +172,12 @@ def _run_e2e(cfg, device, args) -> float:
         rb = RawBoost(mode=int(aug.get("rawboost_mode", 5)), p=float(aug.get("rawboost_p", 0.5)))
 
     crop = float(cfg.get("crop_seconds", 4.0))
-    dev_lim = max(args.limit // 4, 8) if args.limit else None
+    dev_lim = max(args.limit // 4, 8) if args.limit else cfg.get("dev_subsample")
     tr = ManifestDataset(cfg["manifests"]["train"], crop_seconds=crop, train=True,
                          augment=rb, limit=args.limit)
-    dv = ManifestDataset(cfg["manifests"]["dev"], crop_seconds=crop, train=False, limit=dev_lim)
+    dv = ManifestDataset(cfg["manifests"]["dev"], crop_seconds=crop, train=False)
+    if dev_lim:
+        dv.samples = _balanced_head(dv.samples, dev_lim)
     bs = int(cfg.get("batch_size", 8))
 
     # ASVspoof train is ~9x spoof; sample classes evenly so bonafide isn't drowned out

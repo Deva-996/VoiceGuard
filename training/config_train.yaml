@@ -27,6 +27,7 @@ epochs: 20
 crop_seconds: 4.0
 max_frames: 400          # frozen mode: cap on cached feature frames per clip
 frozen_max_per_class: 8000   # frozen mode only: cap ASVspoof train per class (cache size)
+dev_subsample: 3000      # per-epoch dev EER on a balanced 3k subset (final eval uses all)
 
 optimizer:
   name: adamw

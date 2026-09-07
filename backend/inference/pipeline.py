@@ -65,7 +65,21 @@ class DetectionPipeline:
             fe_cfg.layer = bundle.get("layer", fe_cfg.layer)
 
         extractor = build_feature_extractor(fe_cfg, finetuned_state=bundle.get("frontend"))
-        classifier = AASISTClassifier.from_config(cfg.classifier, feat_dim=extractor.feat_dim)
+
+        if bundle.get("model"):
+            # self-describing bundle: build the head to the trained dims, load it
+            embed_dim = bundle.get("embed_dim", cfg.classifier.embed_dim)
+            classifier = AASISTClassifier(
+                feat_dim=extractor.feat_dim, embed_dim=embed_dim,
+                num_classes=bundle.get("num_classes", cfg.classifier.num_classes),
+            )
+            missing, unexpected = classifier.load_state_dict(bundle["model"], strict=False)
+            if missing or unexpected:
+                print(f"[DetectionPipeline] head load: {len(missing)} missing, {len(unexpected)} unexpected")
+            classifier.to(cfg.classifier.device).eval()
+        else:
+            classifier = AASISTClassifier.from_config(cfg.classifier, feat_dim=extractor.feat_dim)
+
         return cls(
             extractor=extractor,
             classifier=classifier,

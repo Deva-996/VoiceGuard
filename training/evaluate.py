@@ -23,9 +23,10 @@ ROOT = Path(__file__).resolve().parents[1]
 def _build_classifier(ckpt: dict, feat_dim: int):
     from backend.inference.classifier import AASISTClassifier
 
-    clf = ckpt.get("config", {}).get("classifier", {"embed_dim": 256, "num_classes": 2})
-    model = AASISTClassifier(feat_dim=feat_dim, embed_dim=clf.get("embed_dim", 256),
-                             num_classes=clf.get("num_classes", 2))
+    clf = ckpt.get("config", {}).get("classifier", {})
+    embed_dim = ckpt.get("embed_dim", clf.get("embed_dim", 256))
+    num_classes = ckpt.get("num_classes", clf.get("num_classes", 2))
+    model = AASISTClassifier(feat_dim=feat_dim, embed_dim=embed_dim, num_classes=num_classes)
     model.load_state_dict(ckpt["model"])
     return model.eval()
 
