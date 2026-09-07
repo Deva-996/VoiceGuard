@@ -119,4 +119,10 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    import os
+    import sys
+
+    _rc = main()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(_rc)  # HF download threads can crash interpreter teardown; we're done, bail hard

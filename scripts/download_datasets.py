@@ -23,10 +23,10 @@ and a separate genuine-domain eval slice. See scripts/generate_indian_fakes.py f
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 import tarfile
-import urllib.request
 import zipfile
 from pathlib import Path
 
@@ -250,4 +250,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # os._exit: HF `datasets` streaming leaves HTTP-retry threads that can crash interpreter
+    # teardown (PyGILState_Release / SIGABRT). We're done and everything's flushed — bail hard.
+    _rc = main()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(_rc)

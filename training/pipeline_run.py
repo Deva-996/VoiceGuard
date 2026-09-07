@@ -19,9 +19,16 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def sh(*cmd: str) -> None:
+def sh(*cmd: str, ok_if=None) -> None:
+    """Run a step. If it exits non-zero but ``ok_if()`` is true, warn and continue —
+    HF streaming can crash on interpreter teardown *after* doing its job."""
     print(f"\n$ {' '.join(cmd)}", flush=True)
-    subprocess.run([sys.executable, *cmd], check=True, cwd=ROOT)
+    rc = subprocess.run([sys.executable, *cmd], cwd=ROOT).returncode
+    if rc != 0:
+        if ok_if and ok_if():
+            print(f"!! step exited {rc} but its output is present — continuing")
+            return
+        raise SystemExit(f"step failed ({rc}): {' '.join(cmd)}")
 
 
 def main() -> int:
@@ -43,12 +50,17 @@ def main() -> int:
 
         dev = "cuda" if torch.cuda.is_available() else "cpu"
 
+    def _have(*parts):
+        return (ROOT.joinpath("data", "raw", *parts)).exists()
+
     if not args.skip_download:
         # ASVspoof2019 (train/dev/eval) + IndicTTS genuine. FLEURS / the big eval sets are
         # extra coverage — add "--only ...,fleurs,in_the_wild" locally when disk allows.
-        sh("scripts/download_datasets.py", "--only", "asvspoof2019,indictts")
+        sh("scripts/download_datasets.py", "--only", "asvspoof2019,indictts",
+           ok_if=lambda: _have("asvspoof2019_LA", "data") and _have("indictts", "hindi"))
     if not args.skip_fakes:
-        sh("scripts/generate_indian_fakes.py", "--n", str(args.fake_n), "--device", dev)
+        sh("scripts/generate_indian_fakes.py", "--n", str(args.fake_n), "--device", dev,
+           ok_if=lambda: ROOT.joinpath("data", "generated", "indic_fake", "gu", "manifest.tsv").exists())
 
     sh("scripts/prepare_manifests.py")  # ASVspoof2019 stays as parquet, read in place
 
