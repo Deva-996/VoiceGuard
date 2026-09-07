@@ -195,7 +195,12 @@ The 7-day plan builds the *system*; this track makes detection real.
   with `New-Item -ItemType Junction`.
 - **Training compute:** no GPU. The frozen-frontend baseline (features cached once, AASIST
   head trained off the cache) is CPU-feasible but slow (~overnight per stage). Stage-2
-  frontend fine-tuning needs a GPU (Colab/Kaggle/cloud).
+  frontend fine-tuning needs a GPU (Colab/Kaggle/cloud). **Current run: Kaggle T4,
+  fine-tuning XLS-R-300m** (notebook committed 2026-09-07).
+- **Serve-time memory:** a fine-tuned XLS-R checkpoint makes `DetectionPipeline` load the
+  1.2 GB XLS-R + fine-tuned weights. On this ~5 GB-free machine that + uvicorn + browser may
+  OOM. If so: serve `wav2vec2-base` (train a second, lighter checkpoint on Kaggle) for the
+  live demo and keep XLS-R for the reported numbers, or int8-quantize at load.
 
 ## 10. Conventions
 
