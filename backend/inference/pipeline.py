@@ -51,7 +51,11 @@ class DetectionPipeline:
         ckpt_path = cfg.classifier.checkpoint_path
         if ckpt_path.exists():
             try:
-                loaded = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+                try:  # mmap keeps the ~1.2 GB of weights off the heap until read through
+                    loaded = torch.load(ckpt_path, map_location="cpu",
+                                        weights_only=False, mmap=True)
+                except (TypeError, RuntimeError):
+                    loaded = torch.load(ckpt_path, map_location="cpu", weights_only=False)
                 if isinstance(loaded, dict):
                     bundle = loaded
             except Exception as exc:  # noqa: BLE001
@@ -92,6 +96,10 @@ class DetectionPipeline:
             classifier.to(cfg.classifier.device).eval()
         else:
             classifier = AASISTClassifier.from_config(cfg.classifier, feat_dim=extractor.feat_dim)
+
+        bundle = loaded = None  # release the checkpoint dict (~1.2 GB) before serving
+        import gc
+        gc.collect()
 
         return cls(
             extractor=extractor,

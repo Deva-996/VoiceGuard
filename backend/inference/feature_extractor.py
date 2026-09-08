@@ -123,9 +123,13 @@ class Wav2Vec2Extractor(BaseFeatureExtractor):
             # runtime. Halves the transformer's footprint and speeds up matmul-bound CPU
             # inference; conv feature-encoder and LayerNorms stay fp32. Applied post-finetune
             # so the trained weights are what gets quantized.
+            fp32 = self.model
             self.model = torch.ao.quantization.quantize_dynamic(
-                self.model, {torch.nn.Linear}, dtype=torch.qint8
+                fp32, {torch.nn.Linear}, dtype=torch.qint8
             )
+            del fp32
+            import gc
+            gc.collect()
             self.quantized = True
 
     @torch.inference_mode()
