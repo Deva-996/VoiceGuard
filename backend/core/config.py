@@ -41,6 +41,8 @@ class FeatureExtractorConfig:
     layer: int = -1
     frozen: bool = True
     feat_dim: int = 1024
+    quantize: str = "none"  # none | int8 — dynamic-quantize the SSL frontend's Linear layers
+                            # (~1.2 GB -> ~0.4 GB, ~25% faster on CPU) for memory-tight serving
 
 
 @dataclass

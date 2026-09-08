@@ -76,6 +76,19 @@ class DetectionPipeline:
             missing, unexpected = classifier.load_state_dict(bundle["model"], strict=False)
             if missing or unexpected:
                 print(f"[DetectionPipeline] head load: {len(missing)} missing, {len(unexpected)} unexpected")
+
+            # OC-Softmax checkpoint: the logit head is untrained; score via the centre instead.
+            oc = bundle.get("oc_softmax")
+            if oc:
+                st = oc.get("state", oc)
+                center = st["center"] if isinstance(st, dict) and "center" in st else st
+                classifier.set_oc_softmax(
+                    center,
+                    m_real=oc.get("m_real", 0.9),
+                    m_fake=oc.get("m_fake", 0.2),
+                    alpha=oc.get("alpha", 20.0),
+                )
+                print("[DetectionPipeline] OC-Softmax scoring (centre distance)")
             classifier.to(cfg.classifier.device).eval()
         else:
             classifier = AASISTClassifier.from_config(cfg.classifier, feat_dim=extractor.feat_dim)

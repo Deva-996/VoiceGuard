@@ -29,6 +29,7 @@
     await fetch("/config").then((r) => r.json()).catch(() => ({}));
 
     ctx = new AudioContext();
+    if (ctx.state === "suspended") await ctx.resume(); // ontrack fires after the click gesture
     const src = ctx.createMediaStreamSource(remoteStream);
 
     const proto = location.protocol === "https:" ? "wss" : "ws";

@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))  # allow `python scripts/eval_local.py` (not just -m)
 CKPT = ROOT / "backend" / "models" / "aasist_indicw2v.pt"
 EVAL = ROOT / "data" / "manifests" / "eval.tsv"
 
@@ -37,11 +39,17 @@ def main() -> int:
           f"frontend={c.get('frontend_model_id')} finetuned={c.get('frontend') is not None}\n")
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
+    gpu = dev == "cuda"
     subprocess.run(
         [sys.executable, "-m", "training.evaluate",
          "--checkpoint", str(CKPT), "--manifest", str(EVAL),
          "--by", "dataset,language", "--device", dev,
-         "--per-domain", "6000", "--batch-size", "32" if dev == "cuda" else "8",
+         # XLS-R on CPU is ~3-4 s/clip and memory-tight on a 16 GB box: a balanced
+         # 400/domain subset on 4 s segments at batch 2 is a stable EER estimate that
+         # fits in RAM and finishes in ~1.5 h instead of ~20 h.
+         "--per-domain", "6000" if gpu else "400",
+         "--crop-seconds", "6.0" if gpu else "4.0",
+         "--batch-size", "32" if gpu else "2",
          "--md", str(ROOT / "docs" / "RESULTS.md"),
          "--dump", str(ROOT / "data" / "eval_scores.tsv")],
         check=True, cwd=ROOT,

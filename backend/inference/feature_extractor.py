@@ -91,6 +91,7 @@ class Wav2Vec2Extractor(BaseFeatureExtractor):
         frozen: bool = True,
         device: str = "cpu",
         finetuned_state: dict | None = None,
+        quantize: str = "none",
     ) -> None:
         from transformers import AutoFeatureExtractor, AutoModel  # lazy: heavy, optional dep
 
@@ -113,6 +114,19 @@ class Wav2Vec2Extractor(BaseFeatureExtractor):
             for p in self.model.parameters():
                 p.requires_grad_(False)
         self.feat_dim = int(self.model.config.hidden_size)
+
+        self.quantized = False
+        if str(quantize).lower() == "int8":
+            if self.device.type != "cpu":
+                raise ValueError("quantize=int8 is CPU-only")
+            # dynamic quantization: Linear weights -> int8, activations quantized per-op at
+            # runtime. Halves the transformer's footprint and speeds up matmul-bound CPU
+            # inference; conv feature-encoder and LayerNorms stay fp32. Applied post-finetune
+            # so the trained weights are what gets quantized.
+            self.model = torch.ao.quantization.quantize_dynamic(
+                self.model, {torch.nn.Linear}, dtype=torch.qint8
+            )
+            self.quantized = True
 
     @torch.inference_mode()
     def extract(self, waveform: torch.Tensor) -> torch.Tensor:
@@ -144,8 +158,10 @@ class IndicWav2VecExtractor(Wav2Vec2Extractor):
         layer: int = -1,
         frozen: bool = True,
         device: str = "cpu",
+        quantize: str = "none",
     ) -> None:
-        super().__init__(model_id=model_id, layer=layer, frozen=frozen, device=device)
+        super().__init__(model_id=model_id, layer=layer, frozen=frozen, device=device,
+                         quantize=quantize)
 
 
 def build_feature_extractor(cfg, finetuned_state: dict | None = None) -> BaseFeatureExtractor:
@@ -163,5 +179,6 @@ def build_feature_extractor(cfg, finetuned_state: dict | None = None) -> BaseFea
             layer=getattr(cfg, "layer", -1),
             frozen=getattr(cfg, "frozen", True),
             finetuned_state=finetuned_state,
+            quantize=getattr(cfg, "quantize", "none"),
         )
     raise ValueError(f"unknown feature_extractor backend: {backend!r}")

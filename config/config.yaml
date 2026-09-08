@@ -18,6 +18,9 @@ feature_extractor:
   layer: -1                   # which hidden layer to take frame features from
   frozen: true
   feat_dim: 768              # wav2vec2-base hidden size (real extractors self-report this)
+  quantize: none             # none | int8 — int8 dynamic-quantizes the SSL frontend at load
+                             # (~1.2 GB -> ~0.4 GB for XLS-R, ~25% faster on CPU). Use for the
+                             # live demo on a memory-tight box; keep 'none' for reported numbers.
 
 classifier:
   embed_dim: 256              # AASIST SSL_BACKEND_aasist output dim

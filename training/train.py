@@ -291,6 +291,13 @@ def _train_loop(cfg, args, model, loss_fn, opt, tr_dl, dv_dl, device, scorer,
             st = save_state()
             st["dev_eer"] = eer
             st["epoch"] = ep
+            if uses_emb:  # OC-Softmax: the centre IS the model at inference time — save it
+                st["oc_softmax"] = {
+                    "state": {k: v.cpu() for k, v in loss_fn.state_dict().items()},
+                    "m_real": getattr(loss_fn, "m_real", 0.9),
+                    "m_fake": getattr(loss_fn, "m_fake", 0.2),
+                    "alpha": getattr(loss_fn, "alpha", 20.0),
+                }
             torch.save(st, out)
             flag = "  <- best, saved"
         # resume state every epoch (killed session -> re-run continues from here)

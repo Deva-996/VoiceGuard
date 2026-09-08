@@ -168,15 +168,19 @@ async def stream(ws: WebSocket) -> None:
                 }
             )
             if state.alert:
+                import time as _time
+
                 from backend.alerts import AlertPayload
 
                 await webhook.fire(
                     AlertPayload(
                         session_id=session_id,
                         score=state.score,
+                        level=state.level.value,
                         raw_prob=state.raw_prob,
                         consecutive_high=state.consecutive_high,
                         n_chunks=state.n_chunks,
+                        ts=_time.time(),
                     )
                 )
     except WebSocketDisconnect:

@@ -53,15 +53,22 @@ class EndToEndDetector(nn.Module):
             wav_batch = (wav_batch - m) / s
         return wav_batch
 
-    def forward(self, wav_batch: torch.Tensor, return_embedding: bool = False):
+    def _features(self, wav_batch: torch.Tensor) -> torch.Tensor:
         x = self._normalize(wav_batch)
         ctx = torch.enable_grad() if self.frontend_trainable else torch.no_grad()
         with ctx:
             out = self.frontend(x, output_hidden_states=True)
             feats = out.hidden_states[self.layer]  # (B, T', H)
-        if not self.frontend_trainable:
-            feats = feats.detach()
-        return self.classifier(feats, return_embedding=return_embedding)
+        return feats if self.frontend_trainable else feats.detach()
+
+    def forward(self, wav_batch: torch.Tensor, return_embedding: bool = False):
+        return self.classifier(self._features(wav_batch), return_embedding=return_embedding)
+
+    @torch.no_grad()
+    def fake_prob(self, wav_batch: torch.Tensor) -> torch.Tensor:
+        """(B, T) waveform -> P(spoof) (B,). Honours an OC-Softmax centre if one was set on
+        the classifier (``set_oc_softmax``); otherwise softmax over the logit head."""
+        return self.classifier.fake_prob(self._features(wav_batch))
 
     # --- checkpoints: same shape the live pipeline (DetectionPipeline.from_config) loads ---
     def state_for_checkpoint(self, cpu: bool = True) -> dict:

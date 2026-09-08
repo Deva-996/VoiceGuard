@@ -53,7 +53,13 @@ def score_manifest(checkpoint: str | Path, manifest: str | Path, device: str = "
     from training.dataset import read_manifest
     from training.model import EndToEndDetector
 
-    ckpt = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    # mmap=True keeps the 1.2 GB checkpoint tensors on disk instead of copying them into RAM;
+    # load_state_dict then reads them through. Halves peak memory on the load spike, which
+    # otherwise holds two full copies of the XLS-R weights at once.
+    try:
+        ckpt = torch.load(checkpoint, map_location="cpu", weights_only=False, mmap=True)
+    except (TypeError, RuntimeError):
+        ckpt = torch.load(checkpoint, map_location="cpu", weights_only=False)
     cfg = ckpt.get("config", {})
     fe = cfg.get("frontend") or {"model_id": ckpt.get("frontend_model_id", "facebook/wav2vec2-base"),
                                  "layer": ckpt.get("layer", -1)}
@@ -68,6 +74,20 @@ def score_manifest(checkpoint: str | Path, manifest: str | Path, device: str = "
     det.classifier.load_state_dict(ckpt["model"], strict=False)
     det.set_frontend_trainable(False)
     det.to(device).eval()
+
+    # OC-Softmax checkpoint: the logit head is untrained — score by cosine distance to the
+    # learned centre (same path training used for its dev-EER), mapped to P(spoof).
+    oc = ckpt.get("oc_softmax")
+    if oc:
+        st = oc.get("state", oc)
+        center = st["center"] if isinstance(st, dict) and "center" in st else st
+        det.classifier.set_oc_softmax(center, m_real=oc.get("m_real", 0.9),
+                                      m_fake=oc.get("m_fake", 0.2), alpha=oc.get("alpha", 20.0))
+        print("scoring via OC-Softmax centre distance")
+
+    del ckpt, cfg, clf  # release the checkpoint dict before the scoring loop
+    import gc
+    gc.collect()
 
     rows = read_manifest(manifest)
     if per_domain:
@@ -95,14 +115,28 @@ def score_manifest(checkpoint: str | Path, manifest: str | Path, device: str = "
             w = np.tile(w, int(np.ceil(crop / max(len(w), 1))))[:crop]
         return w
 
-    out = []
+    out, bad = [], 0
     for b in range(0, len(rows), batch_size):
-        chunk = rows[b:b + batch_size]
-        wavs = torch.from_numpy(np.stack([load(s.path) for s in chunk])).to(device)
-        probs = torch.softmax(det(wavs), dim=-1)[:, 1].cpu().numpy()
-        out += list(zip(chunk, (float(p) for p in probs)))
+        keep, wavs = [], []
+        for s in rows[b:b + batch_size]:
+            try:
+                wavs.append(load(s.path))
+                keep.append(s)
+            except Exception as exc:  # noqa: BLE001 - one unreadable clip must not kill the eval
+                bad += 1
+                print(f"  skip {s.utt_id} ({s.dataset}): {type(exc).__name__}: {exc}", flush=True)
+        if not keep:
+            continue
+        batch = torch.from_numpy(np.stack(wavs)).to(device)
+        probs = det.fake_prob(batch).cpu().numpy()
+        out += list(zip(keep, (float(p) for p in probs)))
+        del batch
         if (b // batch_size) % 25 == 0:
-            print(f"  {len(out)}/{len(rows)}")
+            import gc
+            gc.collect()
+            print(f"  {len(out)}/{len(rows)}", flush=True)
+    if bad:
+        print(f"\n{bad} clips skipped (unreadable)")
     return out
 
 
@@ -119,9 +153,25 @@ def report(scored, by: list[str], md_path: str | None = None) -> None:
     lines = []
 
     def emit(name, pairs):
-        eer, tdcf, ns, nb = _eer_row(pairs)
-        print(f"  {name:28s}  EER={eer*100:6.2f}%   min-tDCF={tdcf:.4f}   (n={len(pairs)}, {ns}s/{nb}b)")
-        lines.append((name, eer, tdcf, ns, nb))
+        bona = np.array([p for s, p in pairs if s.label == 0])
+        spoof = np.array([p for s, p in pairs if s.label == 1])
+        if len(bona) and len(spoof):
+            eer, tdcf, ns, nb = _eer_row(pairs)
+            eer_s, tdcf_s = f"{eer*100:.2f}%", f"{tdcf:.4f}"
+            print(f"  {name:28s}  EER={eer*100:6.2f}%   min-tDCF={tdcf:.4f}   (n={len(pairs)}, {ns}s/{nb}b)")
+        else:
+            # single-class slice (genuine-only or fake-only domain): EER undefined; report the
+            # mean P(spoof) and the detection rate at a fixed 0.5 threshold instead.
+            eer_s = tdcf_s = "—"
+            only = spoof if len(spoof) else bona
+            kind = "spoof" if len(spoof) else "bona"
+            det_rate = float((only > 0.5).mean()) if kind == "spoof" else float((only <= 0.5).mean())
+            ns, nb = len(spoof), len(bona)
+            print(f"  {name:28s}  {kind}-only  mean P(spoof)={only.mean():.3f}   "
+                  f"acc@0.5={det_rate*100:.1f}%   (n={len(pairs)})")
+            lines.append((name, eer_s, tdcf_s, ns, nb, f"mean {only.mean():.3f}, acc@0.5 {det_rate*100:.0f}%"))
+            return
+        lines.append((name, eer_s, tdcf_s, ns, nb, ""))
 
     print("\npooled:")
     emit("ALL", scored)
@@ -134,8 +184,8 @@ def report(scored, by: list[str], md_path: str | None = None) -> None:
             emit(f"{col}={k}", groups[k])
 
     if md_path:
-        md = ["| slice | EER | min-tDCF | spoof | bona |", "|---|---|---|---|---|"]
-        md += [f"| {n} | {e*100:.2f}% | {t:.4f} | {s} | {b} |" for n, e, t, s, b in lines]
+        md = ["| slice | EER | min-tDCF | spoof | bona | note |", "|---|---|---|---|---|---|"]
+        md += [f"| {n} | {e} | {t} | {s} | {b} | {note} |" for n, e, t, s, b, note in lines]
         Path(md_path).write_text("\n".join(md) + "\n", encoding="utf-8")
         print(f"\nwrote {md_path}")
 
@@ -150,12 +200,15 @@ def main() -> int:
     ap.add_argument("--per-domain", type=int, default=6000,
                     help="cap utts per dataset (balanced); 0 = use all")
     ap.add_argument("--batch-size", type=int, default=16)
+    ap.add_argument("--crop-seconds", type=float, default=6.0,
+                    help="fixed segment length scored per utt (pad/truncate)")
     ap.add_argument("--dump", default=None, help="write per-utt scores TSV here")
     ap.add_argument("--md", default=None, help="write the results table as markdown here")
     args = ap.parse_args()
 
     scored = score_manifest(args.checkpoint, args.manifest, args.device, args.limit,
-                            per_domain=args.per_domain or None, batch_size=args.batch_size)
+                            per_domain=args.per_domain or None, batch_size=args.batch_size,
+                            crop_seconds=args.crop_seconds)
     if args.dump:
         Path(args.dump).write_text(
             "utt_id\tlabel\tdataset\tlanguage\tfake_prob\n"

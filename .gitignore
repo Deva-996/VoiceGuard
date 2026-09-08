@@ -14,6 +14,7 @@ data/raw/*
 data/processed/*
 data/generated/*
 data/manifests/*
+data/eval_scores.tsv
 !data/**/.gitkeep
 backend/models/*
 !backend/models/.gitkeep
