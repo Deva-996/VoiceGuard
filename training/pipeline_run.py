@@ -37,6 +37,8 @@ def main() -> int:
     ap.add_argument("--fake-n", type=int, default=1200, help="MMS-TTS clips per language")
     ap.add_argument("--epochs", type=int, default=None)
     ap.add_argument("--limit", type=int, default=None, help="smoke run: cap utts")
+    ap.add_argument("--warm-start", default=None,
+                    help="serving checkpoint to continue from when no <out>.resume.pt exists")
     ap.add_argument("--skip-download", action="store_true")
     ap.add_argument("--skip-fakes", action="store_true")
     ap.add_argument("--eval-by", default="dataset,language")
@@ -69,6 +71,8 @@ def main() -> int:
         train_cmd += ["--epochs", str(args.epochs)]
     if args.limit:
         train_cmd += ["--limit", str(args.limit)]
+    if args.warm_start and not (ckpt.with_suffix(".resume.pt")).exists():
+        train_cmd += ["--warm-start", args.warm_start]
     sh(*train_cmd)  # train.py builds the feature cache itself, then trains
 
     if ckpt.exists():

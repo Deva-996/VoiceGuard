@@ -258,6 +258,27 @@ def _train_loop(cfg, args, model, loss_fn, opt, tr_dl, dv_dl, device, scorer,
         (get_opt() if get_opt else opt).load_state_dict(ck["opt"])
         print(f"resumed from {resume_path.name}: epoch {start_ep}, best EER {best*100:.2f}%")
 
+    ws = getattr(args, "warm_start", None)
+    if start_ep == 1 and ws and Path(ws).exists() and not args.limit:
+        # no <out>.resume.pt (e.g. a fresh Kaggle session after the 12 h wall), but a serving
+        # checkpoint from an earlier run is available — continue from its epoch with the
+        # trained weights. Optimizer state and best-EER history are gone, so AdamW restarts
+        # cold (rebuilds its moments in a few dozen steps) and the best-EER latch resets.
+        w = torch.load(ws, map_location=device, weights_only=False)
+        start_ep = int(w["epoch"]) + 1
+        if on_epoch_start:
+            on_epoch_start(start_ep)  # unfreeze frontend + rebuild opt before loading weights
+        if hasattr(model, "classifier") and "model" in w:
+            model.classifier.load_state_dict(w["model"])
+            if w.get("frontend") is not None:
+                model.frontend.load_state_dict(w["frontend"])
+        else:
+            model.load_state_dict(w["model"])
+        if uses_emb and w.get("oc_softmax"):
+            loss_fn.load_state_dict(w["oc_softmax"]["state"])
+        print(f"warm-started from {Path(ws).name}: continuing at epoch {start_ep} "
+              f"(fresh optimizer; best-EER tracking reset)", flush=True)
+
     for ep in range(start_ep, epochs + 1):
         if on_epoch_start:
             on_epoch_start(ep)
@@ -358,6 +379,10 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--epochs", type=int, default=None)
     ap.add_argument("--mode", choices=["frozen", "e2e"], default=None)
+    ap.add_argument("--warm-start", type=Path, default=None,
+                    help="continue from a serving checkpoint (model + OC-Softmax centre, no "
+                         "optimizer state) when no <out>.resume.pt is present — used to chain "
+                         "Kaggle runs across the 12 h wall")
     args = ap.parse_args()
 
     cfg = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
