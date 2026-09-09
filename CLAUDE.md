@@ -169,7 +169,7 @@ The 7-day plan builds the *system*; this track makes detection real.
 | **P2** | Data (`scripts/download_datasets.py`, all non-gated) — ASVspoof 2019 LA ✅, IndicTTS 6 langs ✅, In-the-Wild ✅; ASVspoof 2021 LA eval + FLEURS downloading | ~90% |
 | **P3** | `scripts/generate_indian_fakes.py` — MMS-TTS fakes, content-matched to IndicTTS. Code done + smoke-tested; full run pending genuine data. | code done |
 | **P4** | `scripts/prepare_manifests.py` — per-dataset parsers → train/dev/eval TSVs. Code done; ASVspoof2019 parser verified. | code done |
-| **P5** | **Train on GPU (Kaggle P100)** — `notebooks/train_kaggle.ipynb` (repo pushed to github.com/Deva-996/VoiceGuard, `REPO_URL` prefilled, resumable across sessions, data+ckpt in `/kaggle/working`). Fine-tune XLS-R **and** IndicWav2Vec + RawBoost + OC-Softmax → A/B → `backend/models/aasist_indicw2v.pt`. | **user launches** |
+| **P5** | **Train on GPU (Kaggle T4 x2)** — `notebooks/train_kaggle.ipynb`. XLS-R + AASIST + RawBoost + OC-Softmax fine-tuned across two 12 h Kaggle runs (resume chained via a `.resume.pt` dataset input, see [[kaggle-cli-training]]). **Epoch 10 is the serving checkpoint** — epochs 11–15 improved dev-EER but overfit held-out attacks (pooled 14.09% → 16.42%), see `docs/RESULTS.md`. Pooled eval EER **14.09%**. Further gains need data-mix work, not more epochs. IndicWav2Vec A/B still open. | **done — epoch 10** |
 | **P6** | Frontend — `/ws/signal/<room>` relay + `VG.autoConnect` (room-code), `pcm-worklet.js` AudioWorklet, conic gauge + `dropped`. Routes + signaling tested; browser E2E pending. | code done |
 | **P7** | `tests/test_e2e_alert.py` (PCM→score→HIGH→webhook, deterministic) ✅; `scripts/e2e_demo.py` (real clip through live backend, webhook catcher). Browser E2E + README + screenshots after the checkpoint. | partial |
 
@@ -195,8 +195,8 @@ The 7-day plan builds the *system*; this track makes detection real.
   with `New-Item -ItemType Junction`.
 - **Training compute:** no GPU. The frozen-frontend baseline (features cached once, AASIST
   head trained off the cache) is CPU-feasible but slow (~overnight per stage). Stage-2
-  frontend fine-tuning needs a GPU (Colab/Kaggle/cloud). **Current run: Kaggle T4,
-  fine-tuning XLS-R-300m** (notebook committed 2026-09-07).
+  frontend fine-tuning needs a GPU (Colab/Kaggle/cloud). **Done: 2× Kaggle T4-x2 runs
+  fine-tuned XLS-R-300m to epoch 15; epoch 10 kept (epochs 11–15 overfit — `docs/RESULTS.md`).**
 - **Serve-time memory:** a fine-tuned XLS-R checkpoint makes `DetectionPipeline` load the
   1.2 GB XLS-R + fine-tuned weights. On this ~5 GB-free machine that + uvicorn + browser may
   OOM. If so: serve `wav2vec2-base` (train a second, lighter checkpoint on Kaggle) for the
