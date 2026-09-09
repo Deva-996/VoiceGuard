@@ -35,17 +35,19 @@ training fake mix (currently too MMS-TTS-heavy), not compute. Not a blocker for 
 on `facebook/wav2vec2-base` (English-only, untrained head) or in `dummy` mode — fine for
 wiring the frontend, not for real detection numbers.
 
-To get the real checkpoint, ask [repo owner] for one of:
-- the file directly (`aasist_indicw2v.pt`, 1.2 GB), or
-- access to the Kaggle notebook `srivarreddy77/notebook54095765c6` — **version 5's Output tab**
-  has the epoch-10 `aasist_indicw2v.pt` (version 6 is epoch 15, which overfit — don't use it), or
-- a GitHub Release / Kaggle dataset once the owner publishes one.
+The repo owner is sending `aasist_indicw2v.pt` directly (1.2 GB). Drop it at
+`backend/models/aasist_indicw2v.pt`.
 
-Drop it at `backend/models/aasist_indicw2v.pt`. Verify:
+- size: `1263924365` bytes
+- sha256: `dffc95d010631e0476ece6bdebcb0310502d261d822d3cf80840431fdf7e71ab`
+
 ```bash
 python -c "import torch; c=torch.load('backend/models/aasist_indicw2v.pt',map_location='cpu',weights_only=False); print('epoch',c['epoch'],'dev_eer',c['dev_eer'],'oc_softmax' in c)"
 # -> epoch 10 dev_eer 0.0033... True
 ```
+
+(Alternative source: Kaggle notebook `srivarreddy77/notebook54095765c6` **version 5's Output
+tab** — v5 is epoch 10, v6 is the overfit epoch 15, don't use v6.)
 
 ## Run it
 
